@@ -1,0 +1,4 @@
+sdk: docker
+app_port: 7860
+hardware: A10G Large
+pinned: true
