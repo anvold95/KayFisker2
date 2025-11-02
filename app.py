@@ -207,6 +207,3 @@ async def get_audio():
 
 from fastapi.responses import HTMLResponse
 
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    return "<html><body><h3>Spør Fisker kjører ✅</h3></body></html>"
