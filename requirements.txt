@@ -1,4 +1,8 @@
-!pip uninstall -y pinecone-client
+--upgrade-strategy eager
+pip uninstall -y pinecone-client
+pip uninstall -y pinecone
+pinecone>=4.1.0
+
 
 
 torch
