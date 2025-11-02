@@ -123,6 +123,8 @@ def load_model():
 # --------------------
 # Pinecone (RAG)
 # --------------------
+from datetime import datetime
+
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-corpus-1024")
 EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
@@ -132,93 +134,112 @@ embedder = None
 reranker = None
 
 if not PINECONE_API_KEY:
-    print("⚠️ Ingen PINECONE_API_KEY funnet – RAG deaktivert.")
+    print("⚠️ Ingen PINECONE_API_KEY fundet – RAG deaktiveret.")
 else:
     try:
+        from pinecone import Pinecone, ServerlessSpec
         pc = Pinecone(api_key=PINECONE_API_KEY)
+
+        # check index
+        if INDEX_NAME not in [idx.name for idx in pc.list_indexes()]:
+            print(f"⚠️ Index '{INDEX_NAME}' findes ikke – opretter nyt serverless index …")
+            pc.create_index(
+                name=INDEX_NAME,
+                dimension=1024,
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            )
+            # give Pinecone lidt tid til at oprette
+            import time; time.sleep(8)
+
         pinecone_index = pc.Index(INDEX_NAME)
         embedder = SentenceTransformer(EMBED_MODEL)
         reranker = CrossEncoder("BAAI/bge-reranker-base")
-        print(f"✅ Pinecone RAG aktivert på index '{INDEX_NAME}' (embed={EMBED_MODEL}).")
+        print(f"✅ Pinecone RAG aktiv på '{INDEX_NAME}' (embed={EMBED_MODEL}).")
     except Exception as e:
-        print("❌ Feil ved tilkobling til Pinecone:", e)
+        print("❌ Fejl ved tilkobling til Pinecone:", e)
         pinecone_index = None
+
 
 # --------------------
 # Tekst-normalisering (OCR/ortografi)
 # --------------------
 def normalize_orthography(txt: str) -> str:
+    """Bevar gammel dansk ortografi men ryd op i linjeskift og orddelinger."""
     if not txt:
         return txt
-    txt = re.sub(r"(\w+)-\n(\w+)", r"\1\2", txt)
-    txt = re.sub(r"[ \t]*\n[ \t]*", " ", txt)
-    txt = re.sub(r"\bpaa\b", "på", txt)
-    txt = re.sub(r"\s{2,}", " ", txt).strip()
+    txt = re.sub(r"(\w+)-\n(\w+)", r"\1\2", txt)          # fjern orddeling
+    txt = re.sub(r"[ \t]*\n[ \t]*", " ", txt)             # fjern linjeskift
+    txt = re.sub(r"\s{2,}", " ", txt).strip()             # dobbelte mellemrum
     return txt
 
-_CAPTION_REGEX = re.compile(r"\b(Fig\.?|Figur|Foto|Pl\.?|Plate|Billede|Plan|Snit|Facade|Kort|Tegning)\b", re.I)
-_TECH_TERMS = re.compile(r"(typolog|lejlighed|bolig|målestok|facade|snit|byrum|trappe|køkken|bad|toilet|opgang)", re.I)
 
-def _is_good_context(txt: str) -> bool:
-    if not txt:
-        return False
-    words = txt.split()
-    if len(words) < 12:
-        return False
-    if not _TECH_TERMS.search(txt):
-        return False
-    return True
-
+# --------------------
+# Pinecone-søgning med debug
+# --------------------
 def _fetch_ns(ns: str, qvec, top_k: int):
+    """Intern funktion der henter fra én namespace og logger råresultater."""
     try:
         res = pinecone_index.query(vector=qvec, top_k=top_k, include_metadata=True, namespace=ns)
         matches = res.get("matches", []) or []
         for m in matches:
             m["metadata"]["__ns"] = ns
+        print(f"🔍  {len(matches)} dokumenter fundet i namespace '{ns}'")
+        # kort debug-print
+        for m in matches[:2]:
+            md = m.get("metadata", {})
+            print(f"   ↳ {ns}: {md.get('title', '?')} ({md.get('year', '')}) – score {m.get('score'):.3f}")
         return matches
-    except Exception:
+    except Exception as e:
+        print(f"⚠️  Fejl i Pinecone-query for namespace '{ns}':", e)
         return []
 
+
 def pinecone_search(user_prompt: str, k: int = 8):
+    """Søg i alle namespaces, vægt og filtrer resultater."""
     if not (pinecone_index and embedder):
         print("⚠️ pinecone/embedding ikke aktiv.")
         return [], []
 
+    print(f"\n🧠 Pinecone-søgning: '{user_prompt}'  ({datetime.now().strftime('%H:%M:%S')})")
     qvec = embedder.encode(user_prompt).tolist()
     namespaces = ["primary", "secondary", "quotes"]
-    weights = {"primary": 1.0, "secondary": 1.5, "quotes": 0.3}
+    weights = {"primary": 1.0, "secondary": 1.3, "quotes": 0.5}
+
     pool = []
     for ns in namespaces:
-        m = _fetch_ns(ns, qvec, top_k=k)
-        print(f"🔍 {ns}: {len(m)} treff")
-        for item in m:
-            item["weight"] = weights.get(ns, 0.5)
-            pool.append(item)
+        pool += _fetch_ns(ns, qvec, top_k=k)
 
-    pre = []
+    if not pool:
+        print("⚠️ Ingen matches fra nogen namespace.")
+        return [], []
+
+    # filtrér
+    filtered = []
     for m in pool:
         md = m.get("metadata") or {}
         raw = (md.get("text") or "").strip()
         txt = normalize_orthography(raw)
         txt = clean_text(txt)
-        if not _is_good_context(txt):
+        if not txt or len(txt.split()) < 8:
             continue
         m["metadata"]["text"] = txt
-        pre.append(m)
+        m["weight"] = weights.get(md.get("__ns"), 1.0)
+        filtered.append(m)
 
-    if not pre:
-        print("⚠️ Ingen godkjent kontekst etter filtrering.")
+    if not filtered:
+        print("⚠️ Ingen godkendte kontekstblokke efter filtrering.")
         return [], []
 
-    pre.sort(key=lambda x: x.get("weight", 1.0), reverse=True)
-
+    # rerank
     if reranker is not None:
-        pairs = [(user_prompt, x["metadata"]["text"]) for x in pre]
+        pairs = [(user_prompt, x["metadata"]["text"]) for x in filtered]
         scores = reranker.predict(pairs)
-        pre = [x for _, x in sorted(zip(scores, pre), key=lambda z: z[0], reverse=True)]
+        filtered = [x for _, x in sorted(zip(scores, filtered), key=lambda z: z[0], reverse=True)]
 
+    # saml kontekst
     context_blocks, sources = [], []
-    for m in pre[:6]:
+    for m in filtered[:6]:
         md = m["metadata"]
         context_blocks.append(md["text"].strip())
         src = " / ".join(
@@ -227,9 +248,15 @@ def pinecone_search(user_prompt: str, k: int = 8):
         )
         if src:
             sources.append(src)
+
+    # debug
+    print(f"🧱 Udvalgte kontekstblokke: {len(context_blocks)}")
+    for i, blk in enumerate(context_blocks, 1):
+        print(f"   [{i}] {blk[:120]}{'…' if len(blk) > 120 else ''}")
+
     sources = list(dict.fromkeys(sources))
-    print("🧱 context_blocks hentet:", len(context_blocks))
     return context_blocks, sources
+
 
 
 
