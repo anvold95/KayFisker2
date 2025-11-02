@@ -12,12 +12,30 @@ WORKDIR /app
 # Kopier filer
 COPY . .
 
-# Installer avhengigheter
+# Oppdater pip og installer avhengigheter
 RUN pip install --upgrade pip
-RUN pip install -r requirements.txt || true
+RUN pip install --no-cache-dir -r requirements.txt || true
 
-# Installer FastAPI og uvicorn hvis ikke i requirements
-RUN pip install fastapi uvicorn "transformers>=4.35.0" "torch>=2.1.0" "sentence-transformers" "peft" "huggingface-hub" "pinecone" "espnet"
+# Installer ekstra pakker (dersom ikke i requirements)
+RUN pip install --no-cache-dir \
+    fastapi uvicorn \
+    "transformers>=4.35.0" \
+    "torch>=2.1.0" \
+    "sentence-transformers" \
+    "peft" \
+    "huggingface-hub" \
+    "pinecone" \
+    "espnet"
+
+# Sett Hugging Face cache-mappe
+ENV HF_HOME=/app/cache
+ENV HF_HUB_CACHE=/app/cache
+ENV TRANSFORMERS_CACHE=/app/cache
+RUN mkdir -p /app/cache && chmod -R 777 /app/cache
+
+# (valgfritt) Forhåndslast LoRA-adapter for raskere oppstart
+# NB: krever HF_TOKEN satt i build environment (Settings → Variables → HF_TOKEN)
+# RUN huggingface-cli download anvold/fisker-lora-clean --local-dir /app/cache/fisker-lora
 
 # Eksponer porten Hugging Face bruker
 EXPOSE 7860
