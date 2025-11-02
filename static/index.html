@@ -5,125 +5,133 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Spør Fisker</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .bubble {
+      animation: fadeInUp 0.25s ease forwards;
+    }
+    @keyframes pulseDots {
+      0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-2px); }
+    }
+    .typing span {
+      display: inline-block;
+      animation: pulseDots 1.2s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+  </style>
 </head>
-<body class="bg-neutral-50 text-neutral-900 flex items-center justify-center min-h-screen p-6">
+<body class="bg-[#faf8f5] text-neutral-800 flex items-center justify-center min-h-screen p-4">
 
-  <div class="bg-white shadow-2xl rounded-3xl w-full max-w-2xl h-full max-h-[90vh] flex flex-col overflow-hidden">
-
+  <div class="bg-white shadow-lg rounded-3xl w-full max-w-2xl h-[90vh] flex flex-col overflow-hidden border border-neutral-200">
     <!-- Header -->
-    <div class="px-6 py-4 border-b border-neutral-200">
-      <h1 class="text-3xl font-semibold tracking-tight">Spør Fisker</h1>
+    <div class="px-6 py-4 border-b border-neutral-200 bg-[#f6f4f2]">
+      <h1 class="text-2xl font-medium tracking-tight">Spør Fisker</h1>
+      <div id="status" class="text-sm text-neutral-500 mt-1">Modellen laster inn …</div>
     </div>
 
-    <!-- Chat og status -->
-    <div class="flex-grow flex flex-col">
-
-      <!-- Status -->
-      <div id="status" class="px-6 py-2 text-sm text-neutral-500">
-        Modellen laster inn …
-      </div>
-
-      <!-- Chatcontainer -->
-      <div id="chat" class="flex-grow px-6 py-4 overflow-y-auto space-y-3 scrollbar-thin scrollbar-thumb-neutral-300 bg-neutral-100">
-        <!-- Meldinger kommer her -->
-      </div>
-
+    <!-- Chatcontainer -->
+    <div id="chat" class="flex-grow px-6 py-4 overflow-y-auto bg-[#fdfcfa] space-y-3 scroll-smooth">
     </div>
 
-    <!-- Inputfelt -->
-    <div class="px-6 py-4 border-t border-neutral-200 bg-neutral-50">
+    <!-- Input -->
+    <div class="px-6 py-4 border-t border-neutral-200 bg-[#f6f4f2]">
       <div class="flex gap-3">
-        <input id="input" type="text"
-          placeholder="Skriv her …"
-          class="flex-grow border border-neutral-300 rounded-2xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-400" />
+        <input id="input" type="text" placeholder="Skriv her …"
+          class="flex-grow border border-neutral-300 rounded-2xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-300 bg-white" />
         <button id="send"
-          class="bg-neutral-900 text-white text-base rounded-2xl px-5 py-3 hover:bg-neutral-800 transition">
+          class="bg-neutral-800 text-white text-base rounded-2xl px-5 py-3 transition transform hover:bg-neutral-700 hover:scale-[1.02] active:scale-[0.98]">
           Send
         </button>
       </div>
     </div>
-
   </div>
 
-  <script>
-    const chat = document.getElementById("chat");
-    const input = document.getElementById("input");
-    const sendBtn = document.getElementById("send");
-    const statusEl = document.getElementById("status");
-    const API_URL = window.location.origin + "/chat";
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const statusEl = document.getElementById("status");
+const API_URL = window.location.origin + "/chat";
 
-    let modelReady = false;
-
-    async function checkModelStatus() {
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ message: "hej" })
-        });
-        const data = await res.json();
-        if (!data.text.includes("Modellen laster")) {
-          modelReady = true;
-          statusEl.textContent = "Modellen er klar.";
-          statusEl.classList.remove("text-neutral-500");
-          statusEl.classList.add("text-green-600");
-        } else {
-          setTimeout(checkModelStatus, 2000);
-        }
-      } catch {
-        setTimeout(checkModelStatus, 2000);
-      }
-    }
-    checkModelStatus();
-
-    sendBtn.addEventListener("click", send);
-    input.addEventListener("keydown", e => {
-      if (e.key === "Enter") send();
+async function checkModelStatus() {
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ message: "hej" })
     });
-
-    async function send() {
-      const msg = input.value.trim();
-      if (!msg) return;
-      addMessage("user", msg);
-      input.value = "";
-      const botMsg = addMessage("bot", "…");
-
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: msg }),
-        });
-        const data = await res.json();
-        botMsg.textContent = data.text || "(ingen svar)";
-        if (data.audio_url) playAudio(data.audio_url);
-      } catch (err) {
-        botMsg.textContent = "⚠️ Feil under samtale.";
-        console.error(err);
-      }
-
-      chat.scrollTop = chat.scrollHeight;
+    const data = await res.json();
+    if (!data.text.includes("Modellen laster")) {
+      statusEl.textContent = "Modellen er klar.";
+      statusEl.classList.remove("text-neutral-500");
+      statusEl.classList.add("text-green-600");
+    } else {
+      setTimeout(checkModelStatus, 3000);
     }
+  } catch {
+    setTimeout(checkModelStatus, 3000);
+  }
+}
+checkModelStatus();
 
-    function addMessage(role, text) {
-      const div = document.createElement("div");
-      div.className = `px-4 py-3 rounded-2xl text-base whitespace-pre-wrap leading-relaxed ${
-        role === "user"
-          ? "bg-neutral-900 text-white self-end"
-          : "bg-white text-neutral-900 self-start"
-      }`;
-      div.textContent = text;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-      return div;
-    }
+sendBtn.addEventListener("click", send);
+input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
 
-    function playAudio(url) {
-      const audio = new Audio(url);
-      audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
-    }
+async function send() {
+  const msg = input.value.trim();
+  if (!msg) return;
+  addMessage("user", msg);
+  input.value = "";
 
-  </script>
+  const typing = addTyping();
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: msg }),
+    });
+    const data = await res.json();
+    typing.remove();
+    addMessage("bot", data.text || "(ingen svar)");
+    if (data.audio_url) playAudio(data.audio_url);
+  } catch (err) {
+    typing.remove();
+    addMessage("bot", "Feil under samtale.");
+    console.error(err);
+  }
+}
 
+function addMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = `bubble max-w-[85%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed ${
+    role === "user"
+      ? "bg-[#e8e6e3] text-neutral-900 self-end"
+      : "bg-white border border-neutral-200 self-start"
+  }`;
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function addTyping() {
+  const div = document.createElement("div");
+  div.className = "bubble bg-white border border-neutral-200 self-start typing";
+  div.innerHTML = "<span>.</span><span>.</span><span>.</span>";
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function playAudio(url) {
+  const audio = new Audio(url);
+  audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
+}
+</script>
 </body>
 </html>
