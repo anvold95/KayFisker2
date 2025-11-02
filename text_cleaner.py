@@ -1,3 +1,8 @@
+import os
+os.environ["NUMBA_CACHE_DIR"] = "/tmp/numba_cache"
+os.environ["NUMBA_DISABLE_JIT"] = "1"
+
+
 import re, unicodedata
 from transformers.pipelines import pipeline as hf_pipeline  # <--- endret her
 
