@@ -118,7 +118,9 @@ def load_model():
         print("⚠️ Kunne ikke laste TTS:", e)
         tts = None
 
-   # --------------------
+    # avslutt her
+
+# --------------------
 # Pinecone (RAG)
 # --------------------
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
