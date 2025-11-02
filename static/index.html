@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8" />
+<title>Spør Fisker</title>
+<style>
+body {
+  font-family: sans-serif;
+  max-width: 640px;
+  margin: 40px auto;
+}
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg {
+  padding: 8px 12px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+}
+.user {
+  background: #007aff22;
+  align-self: flex-end;
+}
+.bot {
+  background: #eee;
+  align-self: flex-start;
+}
+#input {
+  width: 80%;
+  padding: 6px;
+}
+button {
+  padding: 6px 12px;
+}
+</style>
+</head>
+<body>
+<h2>Spør Fisker</h2>
+
+<div id="chat" class="chat"></div>
+<input id="input" placeholder="Skriv her …" />
+<button id="send">Send</button>
+
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+
+sendBtn.addEventListener("click", send);
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") send();
+});
+
+async function send() {
+  const msg = input.value.trim();
+  if (!msg) return;
+  add("user", msg);
+  input.value = "";
+  const thinking = add("bot", "…");
+  chat.scrollTop = chat.scrollHeight;
+
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: msg }),
+    });
+    const data = await res.json();
+    thinking.textContent = data.text || "(ingen svar)";
+    if (data.audio_url) playAudio(data.audio_url);
+  } catch (err) {
+    thinking.textContent = "Feil under samtale.";
+    console.error(err);
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function add(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  chat.appendChild(div);
+  return div;
+}
+
+// spill av lydfilen som sendes fra backend
+function playAudio(url) {
+  const audio = new Audio(url);
+  audio.play().catch(() => {
+    console.warn("Kunne ikke spille av lyd:", url);
+  });
+}
+</script>
+</body>
+</html>
