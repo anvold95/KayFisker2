@@ -14,3 +14,4 @@ opencv-python
 fastapi
 uvicorn
 requests
+espnet==202402
