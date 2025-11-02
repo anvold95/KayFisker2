@@ -13,6 +13,7 @@
     .bubble {
       animation: fadeInUp 0.25s ease forwards;
     }
+
     @keyframes pulseDots {
       0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
       40% { opacity: 1; transform: translateY(-2px); }
@@ -25,113 +26,149 @@
     .typing span:nth-child(3) { animation-delay: 0.4s; }
   </style>
 </head>
-<body class="bg-[#faf8f5] text-neutral-800 flex items-center justify-center min-h-screen p-4">
 
-  <div class="bg-white shadow-lg rounded-3xl w-full max-w-2xl h-[90vh] flex flex-col overflow-hidden border border-neutral-200">
-    <!-- Header -->
-    <div class="px-6 py-4 border-b border-neutral-200 bg-[#f6f4f2]">
-      <h1 class="text-2xl font-medium tracking-tight">Spør Fisker</h1>
-      <div id="status" class="text-sm text-neutral-500 mt-1">Modellen laster inn …</div>
+<body class="bg-white text-neutral-800 flex items-center justify-center min-h-screen p-4">
+
+  <div class="flex bg-white shadow-lg rounded-3xl w-full max-w-4xl h-[90vh] overflow-hidden border border-neutral-200">
+
+    <!-- Sidebar -->
+    <div class="hidden md:flex flex-col items-center justify-center w-1/3 bg-[#f6f4f2] border-r border-neutral-200">
+      <img src="/static/img/fisker1.jpg" alt="Kay Fisker"
+           class="w-40 h-40 rounded-full object-cover shadow-sm mb-4">
+      <p class="text-center text-sm text-neutral-600 max-w-[80%] leading-snug">
+        Kay Fisker (1893–1965)<br>
+        Dansk arkitekt og professor. Kendt for en nøgtern, funktionel tilgang til arkitekturens sociale rolle.
+      </p>
     </div>
 
-    <!-- Chatcontainer -->
-    <div id="chat" class="flex-grow px-6 py-4 overflow-y-auto bg-[#fdfcfa] space-y-3 scroll-smooth">
-    </div>
+    <!-- Chat-section -->
+    <div class="flex flex-col flex-grow">
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-neutral-200 bg-[#f6f4f2]">
+        <h1 class="text-2xl font-medium tracking-tight">Spør Fisker</h1>
+        <div id="status" class="text-sm text-neutral-500 mt-1">Modellen laster inn …</div>
+      </div>
 
-    <!-- Input -->
-    <div class="px-6 py-4 border-t border-neutral-200 bg-[#f6f4f2]">
-      <div class="flex gap-3">
-        <input id="input" type="text" placeholder="Skriv her …"
-          class="flex-grow border border-neutral-300 rounded-2xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-300 bg-white" />
-        <button id="send"
-          class="bg-neutral-800 text-white text-base rounded-2xl px-5 py-3 transition transform hover:bg-neutral-700 hover:scale-[1.02] active:scale-[0.98]">
-          Send
-        </button>
+      <!-- Chatcontainer -->
+      <div id="chat"
+           class="flex-grow px-6 py-4 overflow-y-auto bg-white space-y-3 scroll-smooth">
+      </div>
+
+      <!-- Input -->
+      <div class="px-6 py-4 border-t border-neutral-200 bg-[#f6f4f2]">
+        <div class="flex gap-3">
+          <input id="input" type="text" placeholder="Skriv her …"
+            class="flex-grow border border-neutral-300 rounded-2xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-300 bg-white" />
+          <button id="send"
+            class="bg-neutral-800 text-white text-base rounded-2xl px-5 py-3 transition transform hover:bg-neutral-700 hover:scale-[1.02] active:scale-[0.98]">
+            Send
+          </button>
+        </div>
       </div>
     </div>
   </div>
 
-<script>
-const chat = document.getElementById("chat");
-const input = document.getElementById("input");
-const sendBtn = document.getElementById("send");
-const statusEl = document.getElementById("status");
-const API_URL = window.location.origin + "/chat";
+  <script>
+    const chat = document.getElementById("chat");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const statusEl = document.getElementById("status");
+    const API_URL = window.location.origin + "/chat";
 
-async function checkModelStatus() {
-  try {
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ message: "hej" })
-    });
-    const data = await res.json();
-    if (!data.text.includes("Modellen laster")) {
-      statusEl.textContent = "Modellen er klar.";
-      statusEl.classList.remove("text-neutral-500");
-      statusEl.classList.add("text-green-600");
-    } else {
-      setTimeout(checkModelStatus, 3000);
+    // --- Modelstatus ---
+    async function checkModelStatus() {
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ message: "hej" })
+        });
+        const data = await res.json();
+        if (!data.text.includes("Modellen laster")) {
+          statusEl.textContent = "Modellen er klar.";
+          statusEl.classList.remove("text-neutral-500");
+          statusEl.classList.add("text-green-600");
+        } else {
+          setTimeout(checkModelStatus, 3000);
+        }
+      } catch {
+        setTimeout(checkModelStatus, 3000);
+      }
     }
-  } catch {
-    setTimeout(checkModelStatus, 3000);
-  }
-}
-checkModelStatus();
+    checkModelStatus();
 
-sendBtn.addEventListener("click", send);
-input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+    sendBtn.addEventListener("click", send);
+    input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
 
-async function send() {
-  const msg = input.value.trim();
-  if (!msg) return;
-  addMessage("user", msg);
-  input.value = "";
+    // --- Send melding ---
+    async function send() {
+      const msg = input.value.trim();
+      if (!msg) return;
+      addMessage("user", msg);
+      input.value = "";
+      const typing = addTyping();
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+        typing.remove();
+        addMessage("bot", data.text || "(ingen svar)");
+        if (data.audio_url) playAudio(data.audio_url);
+      } catch (err) {
+        typing.remove();
+        addMessage("bot", "Feil under samtale.");
+        console.error(err);
+      }
+    }
 
-  const typing = addTyping();
-  try {
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: msg }),
-    });
-    const data = await res.json();
-    typing.remove();
-    addMessage("bot", data.text || "(ingen svar)");
-    if (data.audio_url) playAudio(data.audio_url);
-  } catch (err) {
-    typing.remove();
-    addMessage("bot", "Feil under samtale.");
-    console.error(err);
-  }
-}
+    // --- Legg til melding ---
+    function addMessage(role, text) {
+      const div = document.createElement("div");
+      div.className = `bubble max-w-[85%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed ${
+        role === "user"
+          ? "bg-[#e8e6e3] text-neutral-900 self-end"
+          : "bg-white border border-neutral-200 self-start"
+      }`;
 
-function addMessage(role, text) {
-  const div = document.createElement("div");
-  div.className = `bubble max-w-[85%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed ${
-    role === "user"
-      ? "bg-[#e8e6e3] text-neutral-900 self-end"
-      : "bg-white border border-neutral-200 self-start"
-  }`;
-  div.textContent = text;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-  return div;
-}
+      // Fjern "Kilder:" fra teksten, legg som hover-info
+      let mainText = text;
+      let sources = "";
+      if (text.includes("Kilder:")) {
+        [mainText, sources] = text.split("Kilder:");
+        sources = sources.trim();
+      }
+      div.textContent = mainText.trim();
+      if (sources) {
+        const info = document.createElement("span");
+        info.textContent = " ℹ️";
+        info.className = "cursor-help text-neutral-400 ml-1";
+        info.title = sources;
+        div.appendChild(info);
+      }
 
-function addTyping() {
-  const div = document.createElement("div");
-  div.className = "bubble bg-white border border-neutral-200 self-start typing";
-  div.innerHTML = "<span>.</span><span>.</span><span>.</span>";
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-  return div;
-}
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
 
-function playAudio(url) {
-  const audio = new Audio(url);
-  audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
-}
-</script>
+    // --- Typing indicator ---
+    function addTyping() {
+      const div = document.createElement("div");
+      div.className = "bubble border-none bg-transparent self-start typing";
+      div.innerHTML = "<span>.</span><span>.</span><span>.</span>";
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
+
+    // --- Spill lyd ---
+    function playAudio(url) {
+      const audio = new Audio(url);
+      audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
+    }
+  </script>
 </body>
 </html>
