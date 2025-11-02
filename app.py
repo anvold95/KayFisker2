@@ -1,3 +1,9 @@
+import os
+os.environ["HF_HOME"] = "/app/cache"
+os.environ["HF_HUB_CACHE"] = "/app/cache"
+os.environ["TRANSFORMERS_CACHE"] = "/app/cache"
+
+
 import os, json, re, torch, threading
 from text_cleaner import clean_text
 from fastapi import FastAPI, Request
