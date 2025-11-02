@@ -17,7 +17,7 @@ RUN pip install --upgrade pip
 RUN pip install -r requirements.txt || true
 
 # Installer FastAPI og uvicorn hvis ikke i requirements
-RUN pip install fastapi uvicorn "transformers>=4.35.0" "torch>=2.1.0" "sentence-transformers" "peft" "huggingface-hub" "pinecone-client" "espnet"
+RUN pip install fastapi uvicorn "transformers>=4.35.0" "torch>=2.1.0" "sentence-transformers" "peft" "huggingface-hub" "pinecone" "espnet"
 
 # Eksponer porten Hugging Face bruker
 EXPOSE 7860
