@@ -200,7 +200,7 @@ def pinecone_search(user_prompt: str, k: int = 8):
         md = m.get("metadata") or {}
         raw = (md.get("text") or "").strip()
         txt = normalize_orthography(raw)
-        txt = clean_text(txt)
+        # txt = clean_text(txt)
         if not _is_good_context(txt):
             continue
         m["metadata"]["text"] = txt
