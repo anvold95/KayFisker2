@@ -1,97 +1,88 @@
 <!DOCTYPE html>
 <html lang="no">
-<head>
-<meta charset="UTF-8" />
-<title>Spør Fisker</title>
-<style>
-body {
-  font-family: sans-serif;
-  max-width: 640px;
-  margin: 40px auto;
-}
-.chat {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.msg {
-  padding: 8px 12px;
-  border-radius: 12px;
-  white-space: pre-wrap;
-}
-.user {
-  background: #007aff22;
-  align-self: flex-end;
-}
-.bot {
-  background: #eee;
-  align-self: flex-start;
-}
-#input {
-  width: 80%;
-  padding: 6px;
-}
-button {
-  padding: 6px 12px;
-}
-</style>
-</head>
-<body>
-<h2>Spør Fisker</h2>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spør Fisker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
 
-<div id="chat" class="chat"></div>
-<input id="input" placeholder="Skriv her …" />
-<button id="send">Send</button>
+  <body class="bg-neutral-50 text-neutral-800 flex items-center justify-center min-h-screen">
+    <div class="bg-white shadow-xl rounded-2xl w-full max-w-lg p-6 flex flex-col space-y-4 border border-neutral-200">
+      <h1 class="text-center text-2xl font-medium tracking-tight text-neutral-900">
+        Spør Fisker
+      </h1>
 
-<script>
-const chat = document.getElementById("chat");
-const input = document.getElementById("input");
-const sendBtn = document.getElementById("send");
+      <div id="chat"
+           class="flex flex-col space-y-3 overflow-y-auto max-h-[65vh] p-2 scrollbar-thin scrollbar-thumb-neutral-300">
+        <!-- Meldinger genereres her -->
+      </div>
 
-sendBtn.addEventListener("click", send);
-input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") send();
-});
+      <div class="flex space-x-2">
+        <input id="input"
+               type="text"
+               placeholder="Skriv her …"
+               class="flex-1 px-4 py-2 text-sm border border-neutral-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-400" />
+        <button id="send"
+                class="px-4 py-2 bg-neutral-900 text-white rounded-xl hover:bg-neutral-800 transition">
+          Send
+        </button>
+      </div>
+    </div>
 
-async function send() {
-  const msg = input.value.trim();
-  if (!msg) return;
-  add("user", msg);
-  input.value = "";
-  const thinking = add("bot", "…");
-  chat.scrollTop = chat.scrollHeight;
+    <script>
+      const chat = document.getElementById("chat");
+      const input = document.getElementById("input");
+      const sendBtn = document.getElementById("send");
+      const API_URL = window.location.origin + "/chat";
 
-  try {
-    const res = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: msg }),
-    });
-    const data = await res.json();
-    thinking.textContent = data.text || "(ingen svar)";
-    if (data.audio_url) playAudio(data.audio_url);
-  } catch (err) {
-    thinking.textContent = "Feil under samtale.";
-    console.error(err);
-  }
-  chat.scrollTop = chat.scrollHeight;
-}
+      sendBtn.addEventListener("click", send);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") send();
+      });
 
-function add(role, text) {
-  const div = document.createElement("div");
-  div.className = "msg " + role;
-  div.textContent = text;
-  chat.appendChild(div);
-  return div;
-}
+      async function send() {
+        const msg = input.value.trim();
+        if (!msg) return;
+        add("user", msg);
+        input.value = "";
+        const thinking = add("bot", "…");
+        chat.scrollTop = chat.scrollHeight;
 
-// spill av lydfilen som sendes fra backend
-function playAudio(url) {
-  const audio = new Audio(url);
-  audio.play().catch(() => {
-    console.warn("Kunne ikke spille av lyd:", url);
-  });
-}
-</script>
-</body>
+        try {
+          const res = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: msg }),
+          });
+
+          if (!res.ok) throw new Error(res.status + " " + res.statusText);
+          const data = await res.json();
+          thinking.textContent = data.text || "(ingen svar)";
+          if (data.audio_url) playAudio(data.audio_url);
+        } catch (err) {
+          thinking.textContent = "⚠️ Feil under samtale.";
+          console.error(err);
+        }
+        chat.scrollTop = chat.scrollHeight;
+      }
+
+      function add(role, text) {
+        const div = document.createElement("div");
+        div.className =
+          "px-4 py-2 rounded-2xl max-w-[80%] whitespace-pre-wrap leading-snug " +
+          (role === "user"
+            ? "self-end bg-neutral-900 text-white"
+            : "self-start bg-neutral-200 text-neutral-900");
+        div.textContent = text;
+        chat.appendChild(div);
+        return div;
+      }
+
+      function playAudio(url) {
+        const audio = new Audio(url);
+        audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
+      }
+    </script>
+  </body>
 </html>
