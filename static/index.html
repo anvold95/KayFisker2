@@ -12,6 +12,7 @@
     }
     .bubble {
       animation: fadeInUp 0.25s ease forwards;
+      position: relative;
     }
 
     @keyframes pulseDots {
@@ -24,6 +25,17 @@
     }
     .typing span:nth-child(2) { animation-delay: 0.2s; }
     .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+    /* 🔊 "reading" effekt */
+    @keyframes readingSweep {
+      0% { background-position: -100% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .reading {
+      background: linear-gradient(90deg, rgba(0,102,255,0.15) 0%, rgba(0,102,255,0) 80%);
+      background-size: 200% 100%;
+      animation: readingSweep 4s linear forwards;
+    }
   </style>
 </head>
 
@@ -33,7 +45,7 @@
 
     <!-- Sidebar -->
     <div class="hidden md:flex flex-col items-center justify-center w-1/3 bg-[#f6f4f2] border-r border-neutral-200">
-      <img src="/static/img/fisker_1.jpg" alt="Kay Fisker"
+      <img src="/static/img/fisker1.jpg" alt="Kay Fisker"
            class="w-40 h-40 rounded-full object-cover shadow-sm mb-4">
       <p class="text-center text-sm text-neutral-600 max-w-[80%] leading-snug">
         Kay Fisker (1893–1965)<br>
@@ -115,8 +127,8 @@
         });
         const data = await res.json();
         typing.remove();
-        addMessage("bot", data.text || "(ingen svar)");
-        if (data.audio_url) playAudio(data.audio_url);
+        const bubble = addMessage("bot", data.text || "(ingen svar)");
+        if (data.audio_url) addAudioButton(bubble, data.audio_url);
       } catch (err) {
         typing.remove();
         addMessage("bot", "Feil under samtale.");
@@ -127,7 +139,7 @@
     // --- Legg til melding ---
     function addMessage(role, text) {
       const div = document.createElement("div");
-      div.className = `bubble max-w-[85%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed ${
+      div.className = `bubble max-w-[85%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed relative ${
         role === "user"
           ? "bg-[#e8e6e3] text-neutral-900 self-end"
           : "bg-white border border-neutral-200 self-start"
@@ -164,10 +176,32 @@
       return div;
     }
 
-    // --- Spill lyd ---
-    function playAudio(url) {
+    // --- Legg til lydikon ---
+    function addAudioButton(bubble, audioUrl) {
+      const btn = document.createElement("button");
+      btn.innerHTML = "🔊";
+      btn.className = "absolute -top-3 -right-2 text-[18px] opacity-60 hover:opacity-100 transition";
+      btn.title = "Afspil svar";
+      bubble.appendChild(btn);
+
+      btn.addEventListener("click", () => {
+        playAudio(audioUrl, bubble);
+      });
+
+      // Spilles automatisk første gang
+      playAudio(audioUrl, bubble);
+    }
+
+    // --- Spill lyd + vis lesingseffekt ---
+    function playAudio(url, bubble) {
       const audio = new Audio(url);
       audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
+
+      // Start visuell "reading"-effekt
+      bubble.classList.add("reading");
+      audio.addEventListener("ended", () => {
+        bubble.classList.remove("reading");
+      });
     }
   </script>
 </body>
