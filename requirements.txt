@@ -1,10 +1,11 @@
 fastapi
 uvicorn
+torch
 transformers
 peft
-torch
 sentence-transformers
 pinecone-client
 huggingface-hub
 python-dotenv
-gradio
+espnet
+soundfile
