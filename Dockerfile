@@ -1,15 +1,25 @@
-FROM python:3.10-slim
+# Base image med GPU-støtte
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04
 
-# Installer systemavhengigheter
-RUN apt-get update && apt-get install -y git && apt-get clean
+# Installer systempakker
+RUN apt-get update && apt-get install -y \
+    python3 python3-pip git ffmpeg libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
 
+# Sett arbeidsmappe
 WORKDIR /app
-COPY . /app
 
-# Installer Python-pakker
-RUN pip install --no-cache-dir -r requirements.txt
+# Kopier filer
+COPY . .
 
-# Eksponer Hugging Face standardport (7860)
+# Installer avhengigheter
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt || true
+
+# Installer FastAPI og uvicorn hvis ikke i requirements
+RUN pip install fastapi uvicorn "transformers>=4.35.0" "torch>=2.1.0" "sentence-transformers" "peft" "huggingface-hub" "pinecone-client" "espnet"
+
+# Eksponer porten Hugging Face bruker
 EXPOSE 7860
 
 # Start FastAPI-serveren
