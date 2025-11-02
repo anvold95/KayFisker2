@@ -1,5 +1,5 @@
 import re, unicodedata
-from transformers import pipeline as hf_pipeline
+from transformers.pipelines import pipeline as hf_pipeline  # <--- endret her
 
 
 # sett True for ekstra “smart” LM-reparasjon (litt tregere, men bedre)
