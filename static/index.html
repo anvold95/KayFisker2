@@ -1,110 +1,129 @@
 <!DOCTYPE html>
 <html lang="da">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spør Fisker</title>
-<script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spør Fisker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-neutral-50 text-neutral-900 flex flex-col items-center justify-center min-h-screen p-4">
+<body class="bg-neutral-50 text-neutral-900 flex items-center justify-center min-h-screen p-6">
 
-  <div class="w-full max-w-xl">
-    <h1 class="text-lg tracking-tight mb-3">Spør Fisker</h1>
+  <div class="bg-white shadow-2xl rounded-3xl w-full max-w-2xl h-full max-h-[90vh] flex flex-col overflow-hidden">
 
-    <!-- Status -->
-    <div id="status" class="text-sm text-neutral-500 mb-4">
-      Modellen laster inn …
+    <!-- Header -->
+    <div class="px-6 py-4 border-b border-neutral-200">
+      <h1 class="text-3xl font-semibold tracking-tight">Spør Fisker</h1>
     </div>
 
-    <!-- Chatcontainer -->
-    <div id="chat" class="flex flex-col gap-2 bg-white border border-neutral-200 rounded-xl p-4 shadow-sm h-[420px] overflow-y-auto"></div>
+    <!-- Chat og status -->
+    <div class="flex-grow flex flex-col">
+
+      <!-- Status -->
+      <div id="status" class="px-6 py-2 text-sm text-neutral-500">
+        Modellen laster inn …
+      </div>
+
+      <!-- Chatcontainer -->
+      <div id="chat" class="flex-grow px-6 py-4 overflow-y-auto space-y-3 scrollbar-thin scrollbar-thumb-neutral-300 bg-neutral-100">
+        <!-- Meldinger kommer her -->
+      </div>
+
+    </div>
 
     <!-- Inputfelt -->
-    <div class="flex mt-4 gap-2">
-      <input id="input" type="text" placeholder="Skriv her …" 
-        class="flex-grow border border-neutral-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-neutral-400">
-      <button id="send" 
-        class="bg-neutral-900 text-white text-sm rounded-lg px-4 py-2 hover:bg-neutral-800 transition">
-        Send
-      </button>
+    <div class="px-6 py-4 border-t border-neutral-200 bg-neutral-50">
+      <div class="flex gap-3">
+        <input id="input" type="text"
+          placeholder="Skriv her …"
+          class="flex-grow border border-neutral-300 rounded-2xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-400" />
+        <button id="send"
+          class="bg-neutral-900 text-white text-base rounded-2xl px-5 py-3 hover:bg-neutral-800 transition">
+          Send
+        </button>
+      </div>
     </div>
+
   </div>
 
-<script>
-const chat = document.getElementById("chat");
-const input = document.getElementById("input");
-const sendBtn = document.getElementById("send");
-const statusEl = document.getElementById("status");
+  <script>
+    const chat = document.getElementById("chat");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const statusEl = document.getElementById("status");
+    const API_URL = window.location.origin + "/chat";
 
-let modelReady = false;
+    let modelReady = false;
 
-// Sjekk modellstatus hvert 5. sekund
-async function checkModelStatus() {
-  try {
-    const res = await fetch("/chat", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ message: "ping" })
-    });
-    const data = await res.json();
-    if (!data.text.includes("Modellen laster")) {
-      modelReady = true;
-      statusEl.textContent = "Modellen er klar.";
-      statusEl.classList.add("text-green-600");
-    } else {
-      setTimeout(checkModelStatus, 5000);
+    async function checkModelStatus() {
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ message: "hej" })
+        });
+        const data = await res.json();
+        if (!data.text.includes("Modellen laster")) {
+          modelReady = true;
+          statusEl.textContent = "Modellen er klar.";
+          statusEl.classList.remove("text-neutral-500");
+          statusEl.classList.add("text-green-600");
+        } else {
+          setTimeout(checkModelStatus, 2000);
+        }
+      } catch {
+        setTimeout(checkModelStatus, 2000);
+      }
     }
-  } catch {
-    setTimeout(checkModelStatus, 5000);
-  }
-}
-checkModelStatus();
+    checkModelStatus();
 
-sendBtn.addEventListener("click", send);
-input.addEventListener("keydown", e => {
-  if (e.key === "Enter") send();
-});
-
-async function send() {
-  const msg = input.value.trim();
-  if (!msg) return;
-  addMessage("user", msg);
-  input.value = "";
-  const botMsg = addMessage("bot", "…");
-
-  try {
-    const res = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: msg }),
+    sendBtn.addEventListener("click", send);
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") send();
     });
-    const data = await res.json();
-    botMsg.textContent = data.text || "(ingen svar)";
-    if (data.audio_url) playAudio(data.audio_url);
-  } catch (err) {
-    botMsg.textContent = "Feil under samtale.";
-    console.error(err);
-  }
-  chat.scrollTop = chat.scrollHeight;
-}
 
-function addMessage(role, text) {
-  const div = document.createElement("div");
-  div.className = `px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${
-    role === "user" 
-      ? "bg-neutral-100 self-end text-neutral-800" 
-      : "bg-neutral-200 self-start text-neutral-800"
-  }`;
-  div.textContent = text;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-  return div;
-}
+    async function send() {
+      const msg = input.value.trim();
+      if (!msg) return;
+      addMessage("user", msg);
+      input.value = "";
+      const botMsg = addMessage("bot", "…");
 
-function playAudio(url) {
-  const audio = new Audio(url);
-  audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
-}
-</script>
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+        botMsg.textContent = data.text || "(ingen svar)";
+        if (data.audio_url) playAudio(data.audio_url);
+      } catch (err) {
+        botMsg.textContent = "⚠️ Feil under samtale.";
+        console.error(err);
+      }
+
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function addMessage(role, text) {
+      const div = document.createElement("div");
+      div.className = `px-4 py-3 rounded-2xl text-base whitespace-pre-wrap leading-relaxed ${
+        role === "user"
+          ? "bg-neutral-900 text-white self-end"
+          : "bg-white text-neutral-900 self-start"
+      }`;
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
+
+    function playAudio(url) {
+      const audio = new Audio(url);
+      audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
+    }
+
+  </script>
+
 </body>
 </html>
