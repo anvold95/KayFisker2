@@ -221,11 +221,21 @@ def pinecone_search(user_prompt: str, k: int = 8):
         raw = (md.get("text") or "").strip()
         txt = normalize_orthography(raw)
         txt = clean_text(txt)
+    
+        # filtrer bort OCR-støy og svensk
+        if re.search(r"[åäöÅÄÖ]", txt):  # svensk/norsk blanding
+            continue
+        if len(txt.split()) < 10 or len(txt) > 800:
+            continue
+        if not re.search(r"[a-zA-ZæøåÆØÅ]", txt):
+            continue
         if not txt or len(txt.split()) < 8:
             continue
+    
         m["metadata"]["text"] = txt
         m["weight"] = weights.get(md.get("__ns"), 1.0)
         filtered.append(m)
+
 
     if not filtered:
         print("⚠️ Ingen godkendte kontekstblokke efter filtrering.")
@@ -249,6 +259,11 @@ def pinecone_search(user_prompt: str, k: int = 8):
         if src:
             sources.append(src)
 
+    # klipp kontekst hvis den blir for lang
+    context = "\n\n---\n".join(context_blocks)
+    if len(context) > 4000:
+        context = context[:4000]
+
     # debug
     print(f"🧱 Udvalgte kontekstblokke: {len(context_blocks)}")
     for i, blk in enumerate(context_blocks, 1):
@@ -256,8 +271,6 @@ def pinecone_search(user_prompt: str, k: int = 8):
 
     sources = list(dict.fromkeys(sources))
     return context_blocks, sources
-
-
 
 
 @app.on_event("startup")
@@ -302,6 +315,9 @@ def chat(user_prompt: str):
             f"{FISKER_TIMELINE}\n\n"
             "Svar konkret, saklig og uten ornamentikk. "
             "Hvis materialet ikke dækker spørgsmålet, si kort at det ikke omtales."
+            "Du skal altid svare på dansk, i et kort og klart sprog på maks. 5-6 sætninger. "
+            "Undgå at gentage information og hold en nøgtern, koncentreret tone.\n\n"
+
         )
 
         full_prompt = (
@@ -312,14 +328,14 @@ def chat(user_prompt: str):
 
         result = pipe(
             full_prompt,
-            max_new_tokens=350,
-            temperature=0.25,
-            top_p=0.9,
-            repetition_penalty=1.1,
-            no_repeat_ngram_size=3,
-            do_sample=True,
+            max_new_tokens=200,        # kortere svar
+            temperature=0.2,           # mer presist, mindre kreativt
+            top_p=0.8,
+            repetition_penalty=1.2,
+            do_sample=False,           # deterministisk
             eos_token_id=tokenizer.eos_token_id,
         )
+
 
         out = result[0]["generated_text"]
         if "Svar:" in out:
