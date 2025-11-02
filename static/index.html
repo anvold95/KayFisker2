@@ -8,91 +8,131 @@
   <!-- Tailwind -->
   <script src="https://cdn.tailwindcss.com"></script>
 
-  <!-- Retros font fra Adobe Fonts -->
+  <!-- Retros font -->
   <link rel="stylesheet" href="https://use.typekit.net/bgo2fdc.css">
 
   <style>
-    @keyframes fadeInUp {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
+    /* --- generelt uttrykk inspirert av Danmarks Nationalleksikon --- */
+    body {
+      background-color: #f5f5f5;
+      color: #111;
+      font-family: "Source Sans Pro", sans-serif;
     }
+
+    .header-bar {
+      background-color: #0050e0;
+      color: white;
+      font-size: 1rem;
+      letter-spacing: 0.2px;
+      padding: 0.8rem 1.5rem;
+      font-weight: 500;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+    }
+
+    h1 {
+      font-family: "retros", sans-serif;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      font-size: 1.9rem;
+      color: #111;
+    }
+
+    .sidebar {
+      background: #f7f7f7;
+      border-right: 1px solid #d4d4d4;
+    }
+
+    .chat-container {
+      border-left: 1px solid #d4d4d4;
+      background: white;
+    }
+
     .bubble {
       animation: fadeInUp 0.25s ease forwards;
       position: relative;
+    }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     @keyframes pulseDots {
       0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
       40% { opacity: 1; transform: translateY(-2px); }
     }
+
     .typing span {
       display: inline-block;
       animation: pulseDots 1.2s infinite;
     }
+
     .typing span:nth-child(2) { animation-delay: 0.2s; }
     .typing span:nth-child(3) { animation-delay: 0.4s; }
 
-    /* 🔊 "reading" effekt */
     @keyframes readingSweep {
       0% { background-position: -100% 0; }
       100% { background-position: 200% 0; }
     }
-    .reading {
-      background: linear-gradient(90deg, rgba(0,102,255,0.15) 0%, rgba(0,102,255,0) 80%);
-      background-size: 200% 100%;
-      animation: readingSweep 8s linear forwards;
-    }
 
-    /* Typografi for tittel */
-    h1 {
-      font-family: "retros", sans-serif;
-      font-weight: 400;
-      letter-spacing: -0.02em;
+    .reading {
+      background: linear-gradient(90deg, rgba(0,80,224,0.12) 0%, rgba(0,80,224,0) 80%);
+      background-size: 200% 100%;
+      animation: readingSweep 7s linear forwards;
     }
   </style>
 </head>
 
-<body class="bg-white text-neutral-800 flex items-center justify-center min-h-screen p-4">
+<body class="flex flex-col min-h-screen">
 
-  <div class="flex bg-white shadow-lg rounded-3xl w-full max-w-4xl h-[90vh] overflow-hidden border border-neutral-200">
+  <!-- Øverste blå linje -->
+  <div class="header-bar">
+    Lex Fisker — et arkiv for samtale og syntese
+  </div>
 
-    <!-- Sidebar -->
-    <div class="hidden md:flex flex-col items-center justify-center min-w-[220px] max-w-[260px] bg-[#f6f4f2] border-r border-neutral-200 p-5">
-      <img src="/static/img/fisker_1.jpg" alt="Kay Fisker"
-           class="w-40 h-40 rounded-full object-cover shadow-sm mb-4">
-      <p class="text-center text-sm text-neutral-600 max-w-[80%] leading-snug">
-        Kay Fisker (1893–1965)<br>
-        Dansk arkitekt og professor. Kendt for en nøgtern, funktionel tilgang til arkitekturens sociale rolle.
-      </p>
-    </div>
+  <!-- hovedramme -->
+  <div class="flex flex-col md:flex-row justify-center items-stretch flex-grow p-4">
+    <div class="flex bg-white rounded-md shadow-sm w-full max-w-5xl h-[90vh] overflow-hidden border border-neutral-300">
 
-    <!-- Chat-section -->
-    <div class="flex flex-col flex-grow">
-      <!-- Header -->
-      <div class="px-6 py-4 border-b border-neutral-200 bg-[#f6f4f2]">
-        <h1 class="text-2xl font-medium tracking-tight">Fisker, arkivet og maskinen</h1>
-        <div id="status" class="text-sm text-neutral-500 mt-1">Modellen laster inn …</div>
+      <!-- Sidebar -->
+      <div class="hidden md:flex flex-col items-center justify-center min-w-[230px] max-w-[260px] sidebar p-5">
+        <img src="/static/img/fisker_1.jpg" alt="Kay Fisker"
+             class="w-40 h-40 rounded-full object-cover mb-4 border border-neutral-300">
+        <p class="text-center text-sm text-neutral-700 max-w-[80%] leading-snug">
+          Kay Fisker (1893–1965)<br>
+          Dansk arkitekt og professor.<br>
+          Kendt for en nøgtern, funktionel tilgang<br>til arkitekturens sociale rolle.
+        </p>
       </div>
 
-      <!-- Chatcontainer -->
-      <div id="chat"
-           class="flex-grow px-6 py-4 overflow-y-auto bg-white space-y-3 scroll-smooth">
-      </div>
+      <!-- Chatdel -->
+      <div class="flex flex-col flex-grow chat-container">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-neutral-200 bg-[#fafafa]">
+          <h1>Fisker, arkivet og maskinen</h1>
+          <div id="status" class="text-sm text-neutral-500 mt-1">Modellen laster inn …</div>
+        </div>
 
-      <!-- Input -->
-      <div class="px-6 py-4 border-t border-neutral-200 bg-[#f6f4f2]">
-        <div class="flex gap-3">
-          <input id="input" type="text" placeholder="Skriv her …"
-            class="flex-grow border border-neutral-300 rounded-2xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-300 bg-white" />
-          <button id="send"
-            class="bg-neutral-800 text-white text-base rounded-2xl px-5 py-3 transition transform hover:bg-neutral-700 hover:scale-[1.02] active:scale-[0.98]">
-            Send
-          </button>
+        <!-- Chat -->
+        <div id="chat" class="flex-grow px-6 py-4 overflow-y-auto bg-white space-y-3 scroll-smooth">
+        </div>
+
+        <!-- Input -->
+        <div class="px-6 py-4 border-t border-neutral-200 bg-[#fafafa]">
+          <div class="flex gap-3">
+            <input id="input" type="text" placeholder="Stil et spørgsmål til Fisker …"
+              class="flex-grow border border-neutral-400 rounded-md px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-neutral-400 bg-white" />
+            <button id="send"
+              class="bg-[#111] text-white text-[15px] rounded-md px-5 py-3 transition hover:bg-[#222]">
+              Send
+            </button>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- JS -->
   <script>
     const chat = document.getElementById("chat");
     const input = document.getElementById("input");
@@ -100,7 +140,7 @@
     const statusEl = document.getElementById("status");
     const API_URL = window.location.origin + "/chat";
 
-    // --- Modelstatus ---
+    // --- status ---
     async function checkModelStatus() {
       try {
         const res = await fetch(API_URL, {
@@ -111,8 +151,7 @@
         const data = await res.json();
         if (!data.text.includes("Modellen laster")) {
           statusEl.textContent = "Modellen er klar.";
-          statusEl.classList.remove("text-neutral-500");
-          statusEl.classList.add("text-green-600");
+          statusEl.classList.replace("text-neutral-500", "text-green-600");
         } else {
           setTimeout(checkModelStatus, 3000);
         }
@@ -125,7 +164,6 @@
     sendBtn.addEventListener("click", send);
     input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
 
-    // --- Send melding ---
     async function send() {
       const msg = input.value.trim();
       if (!msg) return;
@@ -144,21 +182,19 @@
         if (data.audio_url) addAudioButton(bubble, data.audio_url);
       } catch (err) {
         typing.remove();
-        addMessage("bot", "Feil under samtale.");
+        addMessage("bot", "Fejl under samtale.");
         console.error(err);
       }
     }
 
-    // --- Legg til melding ---
     function addMessage(role, text) {
       const div = document.createElement("div");
-      div.className = `bubble max-w-[85%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed relative ${
+      div.className = `bubble max-w-[85%] px-4 py-3 rounded-md text-[15px] leading-relaxed ${
         role === "user"
-          ? "bg-[#e8e6e3] text-neutral-900 self-end"
+          ? "bg-[#f0f0f0] text-neutral-900 self-end"
           : "bg-white border border-neutral-200 self-start"
       }`;
 
-      // Fjern "Kilder:" fra teksten, legg som hover-info
       let mainText = text;
       let sources = "";
       if (text.includes("Kilder:")) {
@@ -166,6 +202,7 @@
         sources = sources.trim();
       }
       div.textContent = mainText.trim();
+
       if (sources) {
         const info = document.createElement("span");
         info.textContent = " ℹ️";
@@ -179,7 +216,6 @@
       return div;
     }
 
-    // --- Typing indicator ---
     function addTyping() {
       const div = document.createElement("div");
       div.className = "bubble border-none bg-transparent self-start typing";
@@ -189,32 +225,21 @@
       return div;
     }
 
-    // --- Legg til lydikon ---
     function addAudioButton(bubble, audioUrl) {
       const btn = document.createElement("button");
       btn.innerHTML = "🔊";
-      btn.className = "absolute top-2 right-3 text-[18px] opacity-60 hover:opacity-100 transition";
+      btn.className = "absolute top-2 right-3 text-[18px] opacity-60 hover:opacity-100";
       btn.title = "Afspil svar";
       bubble.appendChild(btn);
-
-      btn.addEventListener("click", () => {
-        playAudio(audioUrl, bubble);
-      });
-
-      // Spilles automatisk første gang
+      btn.addEventListener("click", () => playAudio(audioUrl, bubble));
       playAudio(audioUrl, bubble);
     }
 
-    // --- Spill lyd + vis lesingseffekt ---
     function playAudio(url, bubble) {
       const audio = new Audio(url);
-      audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
-
-      // Start visuell "reading"-effekt
+      audio.play().catch(() => console.warn("Kunne ikke spille lyd:", url));
       bubble.classList.add("reading");
-      audio.addEventListener("ended", () => {
-        bubble.classList.remove("reading");
-      });
+      audio.addEventListener("ended", () => bubble.classList.remove("reading"));
     }
   </script>
 </body>
