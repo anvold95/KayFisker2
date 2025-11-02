@@ -1,88 +1,110 @@
 <!DOCTYPE html>
-<html lang="no">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Spør Fisker</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-  </head>
+<html lang="da">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spør Fisker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-neutral-50 text-neutral-900 flex flex-col items-center justify-center min-h-screen p-4">
 
-  <body class="bg-neutral-50 text-neutral-800 flex items-center justify-center min-h-screen">
-    <div class="bg-white shadow-xl rounded-2xl w-full max-w-lg p-6 flex flex-col space-y-4 border border-neutral-200">
-      <h1 class="text-center text-2xl font-medium tracking-tight text-neutral-900">
-        Spør Fisker
-      </h1>
+  <div class="w-full max-w-xl">
+    <h1 class="text-lg tracking-tight mb-3">Spør Fisker</h1>
 
-      <div id="chat"
-           class="flex flex-col space-y-3 overflow-y-auto max-h-[65vh] p-2 scrollbar-thin scrollbar-thumb-neutral-300">
-        <!-- Meldinger genereres her -->
-      </div>
-
-      <div class="flex space-x-2">
-        <input id="input"
-               type="text"
-               placeholder="Skriv her …"
-               class="flex-1 px-4 py-2 text-sm border border-neutral-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-400" />
-        <button id="send"
-                class="px-4 py-2 bg-neutral-900 text-white rounded-xl hover:bg-neutral-800 transition">
-          Send
-        </button>
-      </div>
+    <!-- Status -->
+    <div id="status" class="text-sm text-neutral-500 mb-4">
+      Modellen laster inn …
     </div>
 
-    <script>
-      const chat = document.getElementById("chat");
-      const input = document.getElementById("input");
-      const sendBtn = document.getElementById("send");
-      const API_URL = window.location.origin + "/chat";
+    <!-- Chatcontainer -->
+    <div id="chat" class="flex flex-col gap-2 bg-white border border-neutral-200 rounded-xl p-4 shadow-sm h-[420px] overflow-y-auto"></div>
 
-      sendBtn.addEventListener("click", send);
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") send();
-      });
+    <!-- Inputfelt -->
+    <div class="flex mt-4 gap-2">
+      <input id="input" type="text" placeholder="Skriv her …" 
+        class="flex-grow border border-neutral-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-neutral-400">
+      <button id="send" 
+        class="bg-neutral-900 text-white text-sm rounded-lg px-4 py-2 hover:bg-neutral-800 transition">
+        Send
+      </button>
+    </div>
+  </div>
 
-      async function send() {
-        const msg = input.value.trim();
-        if (!msg) return;
-        add("user", msg);
-        input.value = "";
-        const thinking = add("bot", "…");
-        chat.scrollTop = chat.scrollHeight;
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const statusEl = document.getElementById("status");
 
-        try {
-          const res = await fetch(API_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: msg }),
-          });
+let modelReady = false;
 
-          if (!res.ok) throw new Error(res.status + " " + res.statusText);
-          const data = await res.json();
-          thinking.textContent = data.text || "(ingen svar)";
-          if (data.audio_url) playAudio(data.audio_url);
-        } catch (err) {
-          thinking.textContent = "⚠️ Feil under samtale.";
-          console.error(err);
-        }
-        chat.scrollTop = chat.scrollHeight;
-      }
+// Sjekk modellstatus hvert 5. sekund
+async function checkModelStatus() {
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ message: "ping" })
+    });
+    const data = await res.json();
+    if (!data.text.includes("Modellen laster")) {
+      modelReady = true;
+      statusEl.textContent = "Modellen er klar.";
+      statusEl.classList.add("text-green-600");
+    } else {
+      setTimeout(checkModelStatus, 5000);
+    }
+  } catch {
+    setTimeout(checkModelStatus, 5000);
+  }
+}
+checkModelStatus();
 
-      function add(role, text) {
-        const div = document.createElement("div");
-        div.className =
-          "px-4 py-2 rounded-2xl max-w-[80%] whitespace-pre-wrap leading-snug " +
-          (role === "user"
-            ? "self-end bg-neutral-900 text-white"
-            : "self-start bg-neutral-200 text-neutral-900");
-        div.textContent = text;
-        chat.appendChild(div);
-        return div;
-      }
+sendBtn.addEventListener("click", send);
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter") send();
+});
 
-      function playAudio(url) {
-        const audio = new Audio(url);
-        audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
-      }
-    </script>
-  </body>
+async function send() {
+  const msg = input.value.trim();
+  if (!msg) return;
+  addMessage("user", msg);
+  input.value = "";
+  const botMsg = addMessage("bot", "…");
+
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: msg }),
+    });
+    const data = await res.json();
+    botMsg.textContent = data.text || "(ingen svar)";
+    if (data.audio_url) playAudio(data.audio_url);
+  } catch (err) {
+    botMsg.textContent = "Feil under samtale.";
+    console.error(err);
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function addMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = `px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${
+    role === "user" 
+      ? "bg-neutral-100 self-end text-neutral-800" 
+      : "bg-neutral-200 self-start text-neutral-800"
+  }`;
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function playAudio(url) {
+  const audio = new Audio(url);
+  audio.play().catch(() => console.warn("Kunne ikke spille av lyd:", url));
+}
+</script>
+</body>
 </html>
