@@ -3,8 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Spør Fisker</title>
+  <title>Fisker, arkivet og maskinen</title>
+
+  <!-- Tailwind -->
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Retros font fra Adobe Fonts -->
+  <link rel="stylesheet" href="https://use.typekit.net/bgo2fdc.css">
+
   <style>
     @keyframes fadeInUp {
       from { opacity: 0; transform: translateY(8px); }
@@ -36,6 +42,13 @@
       background-size: 200% 100%;
       animation: readingSweep 8s linear forwards;
     }
+
+    /* Typografi for tittel */
+    h1 {
+      font-family: "retros", sans-serif;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+    }
   </style>
 </head>
 
@@ -57,7 +70,7 @@
     <div class="flex flex-col flex-grow">
       <!-- Header -->
       <div class="px-6 py-4 border-b border-neutral-200 bg-[#f6f4f2]">
-        <h1 class="text-2xl font-medium tracking-tight">Spør Fisker</h1>
+        <h1 class="text-2xl font-medium tracking-tight">Fisker, arkivet og maskinen</h1>
         <div id="status" class="text-sm text-neutral-500 mt-1">Modellen laster inn …</div>
       </div>
 
