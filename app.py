@@ -222,22 +222,30 @@ def pinecone_search(user_prompt: str, k: int = 8):
         txt = normalize_orthography(raw)
         txt = clean_text(txt)
     
+        # dropp åpenbart tomme eller for korte/for lange tekster
         if not txt or len(txt.split()) < 8 or len(txt) > 800:
             continue
     
         base_weight = weights.get(md.get("__ns"), 1.0)
     
-        # oppdag svensk/ocr og vekt ned
+        # svensk eller OCR → bare vekt ned, ikke fjern
         if (txt.count("ä") + txt.count("ö")) > 8 and (txt.count("æ") + txt.count("ø")) < 2:
-            base_weight *= 0.6  # mindre vekt, men behold teksten
+            base_weight *= 0.6
     
-        # hvis mange rare tegn eller tall
-        if len(re.findall(r"[^a-zA-ZæøåÆØÅ0-9.,:;?!()\-\s]", txt)) > 10:
+        # mange ikke-alfabetiske tegn → sannsynligvis OCR-feil
+        if len(re.findall(r"[^a-zA-ZæøåÆØÅ0-9.,:;?!()\-\s]", txt)) > 15:
             base_weight *= 0.7
     
         m["metadata"]["text"] = txt
         m["weight"] = base_weight
         filtered.append(m)
+    
+    # fallback hvis alt ble filtrert bort
+    if not filtered:
+        print("⚠️ Ingen godkendte blokke – returnerer rå top-matches.")
+        filtered = pool[:4]
+    
+    print(f"🔎 beholdt {len(filtered)} blokke efter filtrering.")
 
 
 
