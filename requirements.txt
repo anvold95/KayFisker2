@@ -1,3 +1,10 @@
+--upgrade-strategy eager
+--extra-index-url https://pypi.org/simple
+
+# Fjern gamle versjoner og installer riktig Pinecone
+pip-autoremove
+pinecone
+
 torch
 torchvision
 torchaudio
