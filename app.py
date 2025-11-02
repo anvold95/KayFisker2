@@ -214,7 +214,7 @@ def pinecone_search(user_prompt: str, k: int = 8):
         print("⚠️ Ingen matches fra nogen namespace.")
         return [], []
 
-    # filtrér
+    # filtrér og justér vekt
     filtered = []
     for m in pool:
         md = m.get("metadata") or {}
@@ -222,19 +222,23 @@ def pinecone_search(user_prompt: str, k: int = 8):
         txt = normalize_orthography(raw)
         txt = clean_text(txt)
     
-        # filtrer bort OCR-støy og svensk
-        if re.search(r"[åäöÅÄÖ]", txt):  # svensk/norsk blanding
-            continue
-        if len(txt.split()) < 10 or len(txt) > 800:
-            continue
-        if not re.search(r"[a-zA-ZæøåÆØÅ]", txt):
-            continue
-        if not txt or len(txt.split()) < 8:
+        if not txt or len(txt.split()) < 8 or len(txt) > 800:
             continue
     
+        base_weight = weights.get(md.get("__ns"), 1.0)
+    
+        # oppdag svensk/ocr og vekt ned
+        if (txt.count("ä") + txt.count("ö")) > 8 and (txt.count("æ") + txt.count("ø")) < 2:
+            base_weight *= 0.6  # mindre vekt, men behold teksten
+    
+        # hvis mange rare tegn eller tall
+        if len(re.findall(r"[^a-zA-ZæøåÆØÅ0-9.,:;?!()\-\s]", txt)) > 10:
+            base_weight *= 0.7
+    
         m["metadata"]["text"] = txt
-        m["weight"] = weights.get(md.get("__ns"), 1.0)
+        m["weight"] = base_weight
         filtered.append(m)
+
 
 
     if not filtered:
@@ -315,6 +319,8 @@ def chat(user_prompt: str):
             f"{FISKER_TIMELINE}\n\n"
             "Svar konkret, saklig og uten ornamentikk. "
             "Hvis materialet ikke dækker spørgsmålet, si kort at det ikke omtales."
+            "Selv om enkelte arkivutdrag er på svensk eller har OCR-feil, skal du svare i korrekt og flydende dansk, "
+            "uten at stavefeil eller svensk syntaks påvirker tonen."
             "Du skal altid svare på dansk, i et kort og klart sprog på maks. 5-6 sætninger. "
             "Undgå at gentage information og hold en nøgtern, koncentreret tone.\n\n"
 
