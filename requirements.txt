@@ -1,9 +1,5 @@
---upgrade-strategy eager
---extra-index-url https://pypi.org/simple
+!pip uninstall -y pinecone-client
 
-# Fjern gamle versjoner og installer riktig Pinecone
-pip-autoremove
-pinecone
 
 torch
 torchvision
