@@ -329,14 +329,38 @@ def hierarchical_search(query: str):
 def chat_with_audio(user_prompt: str):
     text = chat(user_prompt)
     audio_path = None
+
     if tts is not None and text:
         try:
-            audio = tts(text)
+            print("🎙️ Genererer TTS ...")
+            output = tts(text)
             audio_path = "tts_output.wav"
-            sf.write(audio_path, audio["audio"], samplerate=22050)
+
+            # Håndter både tensor og numpy-array
+            audio_data = output.get("audio", None)
+            sr = output.get("sampling_rate", 22050)
+
+            if audio_data is None:
+                print("⚠️ Ingen 'audio' i TTS-output.")
+                return text, None
+
+            import numpy as np
+            if not isinstance(audio_data, np.ndarray):
+                import torch
+                if isinstance(audio_data, torch.Tensor):
+                    audio_data = audio_data.cpu().numpy()
+                else:
+                    audio_data = np.array(audio_data)
+
+            sf.write(audio_path, audio_data, samplerate=sr)
+            print(f"✅ Lyd lagret: {audio_path}")
+
         except Exception as e:
             print("⚠️ Feil i TTS:", e)
+            audio_path = None
+
     return text, audio_path
+
 
 # --------------------
 # API-endepunkter
