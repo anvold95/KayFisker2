@@ -163,16 +163,124 @@ def sanitize(out: str) -> str:
     return out.strip()
 
 # --------------------
-# Chat
+# Pinecone-søkefunksjon
+# --------------------
+def pinecone_search(query: str, k: int = 5):
+    """Returnerer en liste med relevante tekstblokker og kildereferanser fra Pinecone."""
+    try:
+        if pinecone_index is None or embedder is None:
+            print("⚠️ Pinecone ikke aktivert – returnerer tomt resultat.")
+            return [], []
+
+        # Lag embedding for spørringen
+        query_vec = embedder.encode(query).tolist()
+
+        # Søk i Pinecone
+        res = pinecone_index.query(vector=query_vec, top_k=k, include_metadata=True)
+
+        matches = res.get("matches", [])
+        if not matches:
+            return [], []
+
+        # Hent tekstblokker og kilder
+        texts = []
+        sources = []
+        for m in matches:
+            meta = m.get("metadata", {})
+            text = meta.get("text", "")
+            src = meta.get("source", "")
+            if text:
+                texts.append(text.strip())
+            if src:
+                sources.append(src)
+
+        return texts, sources
+
+    except Exception as e:
+        print("❌ Feil i pinecone_search:", e)
+        return [], []
+
+# --------------------
+# Chatfunksjon (revidert)
 # --------------------
 def chat(user_prompt: str):
-    if pipe is None:
-        return "Modellen laster fortsatt inn – prøv igjen om et øyeblikk."
-    # (du kan her lime inn din eksisterende kontekstlogikk med pinecone_search)
-    prompt = f"Du er Kay Fisker. Spørsmål: {user_prompt}\nSvar:"
-    result = pipe(prompt, max_new_tokens=400, temperature=0.3)
-    out = result[0]["generated_text"].split("Svar:", 1)[-1].strip()
-    return sanitize(out)
+    try:
+        # Hvis modellen får et veldig kort input, legg til en liten "presisering"
+        if len(user_prompt.strip()) < 4:
+            user_prompt = "Hej, hvordan arbejdede du som arkitekt?"
+
+        # Hent et lite biografisk grunnlag (Martin Søberg + tidslinje)
+        bio_blocks, _ = pinecone_search("Kay Fiskers liv og virke", k=3)
+        bio_context = " ".join(bio_blocks[:2]) if bio_blocks else ""
+
+        # Hent kontekst relatert til spørsmålet
+        context_blocks, sources = pinecone_search(user_prompt, k=8)
+        context = "\n\n---\n".join(context_blocks) if context_blocks else ""
+
+        if not context:
+            return "Dette er ikke omtalt i mine tekster."
+
+        # Systemrolle og ramme
+        system_prompt = (
+            "Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiets Arkitektskole. "
+            "Du svarer som deg selv, i nøkternt dansk fagsprog preget av presisjon og disiplin. "
+            "Unngå symbolikk, poesi eller idealistiske vendinger. "
+            "Dine svar skal handle om arkitektur, undervisning, formgivning og bygningers samfundsmæssige rolle.\n\n"
+            "Kort faglig beskrivelse (Martin Søberg):\n"
+            f"{bio_context}\n\n"
+            "Oversikt over ditt liv og virke:\n"
+            f"{FISKER_TIMELINE}\n\n"
+            "Svar konkret, saklig og uten ornamentikk. "
+            "Hvis materialet ikke dekker spørsmålet, si kort at det ikke omtales."
+        )
+
+        # Regler og arbeidsmåte
+        rules = """Regler:
+- Svar KUN med støtte i 'Kontekst' nedenfor. Ikke finn på noe.
+- Parafrasér kort og hold deg til epoken og materialet.
+- Unngå manifest-fraser og allegorisk språk.
+- Gi konkrete vurderinger før refleksjon.
+- Maks 8–10 setninger.
+- Hvis grunnlag mangler: skriv kort at dette ikke omtales og avslutt."""
+
+        plan = """Arbeidsmåte:
+1) Les konteksten og identifiser 2–3 relevante setninger.
+2) Formuler svaret som faglig prosa, uten metaforer.
+3) Avslutt nøkternt hvis materialet er utilstrekkelig."""
+
+        # Endelig prompt
+        full_prompt = (
+            f"{system_prompt}\n\n{rules}\n\n{plan}\n\n"
+            f"Kontekst:\n{context}\n\n"
+            f"Spørgsmål: {user_prompt}\n\nSvar:"
+        )
+
+        # Generering
+        result = pipe(
+            full_prompt,
+            max_new_tokens=350,
+            temperature=0.25,
+            top_p=0.9,
+            repetition_penalty=1.1,
+            no_repeat_ngram_size=3,
+            do_sample=True,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+
+        out = result[0]["generated_text"]
+        if "Svar:" in out:
+            out = out.split("Svar:", 1)[-1].strip()
+
+        out = sanitize(out)
+        if sources:
+            out += "\n\nKilder:\n- " + "\n- ".join(sources)
+
+        return out or "Dette er ikke omtalt i mine tekster."
+
+    except Exception as e:
+        print("❌ Feil i chat:", e)
+        return "Feil i prosesseringen."
+
 
 def chat_with_audio(user_prompt: str):
     text = chat(user_prompt)
