@@ -24,7 +24,15 @@ with open("timeline_fisker.txt", "r", encoding="utf-8") as f:
 # FastAPI app
 # --------------------
 app = FastAPI()
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+from fastapi.responses import HTMLResponse, FileResponse
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return FileResponse("static/index.html")
+
+# Mount static *etterpå* på egen sti
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --------------------
 # Globale variabler
