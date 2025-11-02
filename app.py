@@ -4,6 +4,7 @@ os.environ["HF_HUB_CACHE"] = "/app/cache"
 os.environ["TRANSFORMERS_CACHE"] = "/app/cache"
 
 import json, re, torch
+import soundfile as sf
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +12,7 @@ from transformers import pipeline as hf_pipeline
 from huggingface_hub import hf_hub_download, login, whoami
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from pinecone import Pinecone
-from text_cleaner import clean_text  # ✅ integrert her
+from text_cleaner import clean_text  # ✅ integrert
 
 # --------------------
 # Last timeline
@@ -149,6 +150,7 @@ async def startup_event():
 def sanitize(out: str) -> str:
     return out.strip()
 
+
 def pinecone_search(query: str, k: int = 5, index=None):
     try:
         if index is None or embedder is None:
@@ -173,7 +175,6 @@ def pinecone_search(query: str, k: int = 5, index=None):
         for m in ranked[:k]:
             meta = m.get("metadata", {})
             if meta.get("text"):
-                # ✅ bruk clean_text her
                 cleaned = clean_text(meta["text"])
                 texts.append(cleaned.strip())
             if meta.get("source"):
@@ -182,6 +183,7 @@ def pinecone_search(query: str, k: int = 5, index=None):
     except Exception as e:
         print("❌ Feil i pinecone_search:", e)
         return [], []
+
 
 def hierarchical_search(query: str, k_primary=6, k_secondary=3, k_quotes=2):
     try:
@@ -281,8 +283,7 @@ def chat_with_audio(user_prompt: str):
         try:
             audio = tts(text)
             audio_path = "tts_output.wav"
-            with open(audio_path, "wb") as f:
-                f.write(audio["audio"])
+            sf.write(audio_path, audio["audio"], samplerate=22050)
         except Exception as e:
             print("⚠️ Feil i TTS:", e)
     return text, audio_path
