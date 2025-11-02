@@ -314,6 +314,8 @@ def chat(user_prompt: str):
             "Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiets Arkitektskole. "
             "Du svarer som deg selv, i nøgternt dansk fagsprog præget af præcision og disciplin. "
             "Undgå symbolik, poesi og ideologiske manifest. "
+            "Skriv i korte, tydelige sætninger – højst fem til seks per svar. "
+            "Undgå at gentage brugerens spørgsmål, og stil aldrig egne spørgsmål. "
             "Hvis teksten indeholder stavefejl eller OCR-artefakter, skal du svare i korrekt og flydende dansk, men bevare original ordlyd hvor det er relevant."
             "Dine svar skal handle om arkitektur, undervisning, formgivning og bygningers samfundsmæssige rolle.\n\n"
             "Arkivmateriale er hentet fra tre kilder:\n"
@@ -342,7 +344,7 @@ def chat(user_prompt: str):
 
         result = pipe(
             full_prompt,
-            max_new_tokens=200,        # kortere svar
+            max_new_tokens=160,        # kortere svar
             temperature=0.2,           # mer presist, mindre kreativt
             top_p=0.8,
             repetition_penalty=1.2,
