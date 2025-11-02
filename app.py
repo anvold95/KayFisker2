@@ -118,26 +118,117 @@ def load_model():
         print("⚠️ Kunne ikke laste TTS:", e)
         tts = None
 
-    # Pinecone RAG
-    PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-    EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
+   # --------------------
+# Pinecone (RAG)
+# --------------------
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-corpus-1024")
+EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
 
-    if PINECONE_API_KEY:
-        try:
-            pc = Pinecone(api_key=PINECONE_API_KEY)
-            pinecone_primary = pc.Index("kay-fisker-primary")
-            pinecone_secondary = pc.Index("kay-fisker-secondary")
-            pinecone_quotes = pc.Index("kay-fisker-quotes")
+pinecone_index = None
+embedder = None
+reranker = None
 
-            embedder = SentenceTransformer(EMBED_MODEL)
-            reranker = CrossEncoder("BAAI/bge-reranker-base")
-            print("✅ Pinecone RAG aktivert (3 indekser).")
-        except Exception as e:
-            print("❌ Feil ved Pinecone:", e)
-    else:
-        print("⚠️ Ingen PINECONE_API_KEY – RAG deaktivert.")
+if not PINECONE_API_KEY:
+    print("⚠️ Ingen PINECONE_API_KEY funnet – RAG deaktivert.")
+else:
+    try:
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        pinecone_index = pc.Index(INDEX_NAME)
+        embedder = SentenceTransformer(EMBED_MODEL)
+        reranker = CrossEncoder("BAAI/bge-reranker-base")
+        print(f"✅ Pinecone RAG aktivert på index '{INDEX_NAME}' (embed={EMBED_MODEL}).")
+    except Exception as e:
+        print("❌ Feil ved tilkobling til Pinecone:", e)
+        pinecone_index = None
 
-    print("✅ Modell og LoRA klart.")
+# --------------------
+# Tekst-normalisering (OCR/ortografi)
+# --------------------
+def normalize_orthography(txt: str) -> str:
+    if not txt:
+        return txt
+    txt = re.sub(r"(\w+)-\n(\w+)", r"\1\2", txt)
+    txt = re.sub(r"[ \t]*\n[ \t]*", " ", txt)
+    txt = re.sub(r"\bpaa\b", "på", txt)
+    txt = re.sub(r"\s{2,}", " ", txt).strip()
+    return txt
+
+_CAPTION_REGEX = re.compile(r"\b(Fig\.?|Figur|Foto|Pl\.?|Plate|Billede|Plan|Snit|Facade|Kort|Tegning)\b", re.I)
+_TECH_TERMS = re.compile(r"(typolog|lejlighed|bolig|målestok|facade|snit|byrum|trappe|køkken|bad|toilet|opgang)", re.I)
+
+def _is_good_context(txt: str) -> bool:
+    if not txt:
+        return False
+    words = txt.split()
+    if len(words) < 12:
+        return False
+    if not _TECH_TERMS.search(txt):
+        return False
+    return True
+
+def _fetch_ns(ns: str, qvec, top_k: int):
+    try:
+        res = pinecone_index.query(vector=qvec, top_k=top_k, include_metadata=True, namespace=ns)
+        matches = res.get("matches", []) or []
+        for m in matches:
+            m["metadata"]["__ns"] = ns
+        return matches
+    except Exception:
+        return []
+
+def pinecone_search(user_prompt: str, k: int = 8):
+    if not (pinecone_index and embedder):
+        print("⚠️ pinecone/embedding ikke aktiv.")
+        return [], []
+
+    qvec = embedder.encode(user_prompt).tolist()
+    namespaces = ["primary", "secondary", "quotes"]
+    weights = {"primary": 1.0, "secondary": 1.5, "quotes": 0.3}
+    pool = []
+    for ns in namespaces:
+        m = _fetch_ns(ns, qvec, top_k=k)
+        print(f"🔍 {ns}: {len(m)} treff")
+        for item in m:
+            item["weight"] = weights.get(ns, 0.5)
+            pool.append(item)
+
+    pre = []
+    for m in pool:
+        md = m.get("metadata") or {}
+        raw = (md.get("text") or "").strip()
+        txt = normalize_orthography(raw)
+        txt = clean_text(txt)
+        if not _is_good_context(txt):
+            continue
+        m["metadata"]["text"] = txt
+        pre.append(m)
+
+    if not pre:
+        print("⚠️ Ingen godkjent kontekst etter filtrering.")
+        return [], []
+
+    pre.sort(key=lambda x: x.get("weight", 1.0), reverse=True)
+
+    if reranker is not None:
+        pairs = [(user_prompt, x["metadata"]["text"]) for x in pre]
+        scores = reranker.predict(pairs)
+        pre = [x for _, x in sorted(zip(scores, pre), key=lambda z: z[0], reverse=True)]
+
+    context_blocks, sources = [], []
+    for m in pre[:6]:
+        md = m["metadata"]
+        context_blocks.append(md["text"].strip())
+        src = " / ".join(
+            x for x in [md.get("author"), md.get("title"), str(md.get("year") or ""), md.get("pages")]
+            if x
+        )
+        if src:
+            sources.append(src)
+    sources = list(dict.fromkeys(sources))
+    print("🧱 context_blocks hentet:", len(context_blocks))
+    return context_blocks, sources
+
 
 
 @app.on_event("startup")
@@ -148,69 +239,8 @@ async def startup_event():
 # Hjelpefunksjoner
 # --------------------
 def sanitize(out: str) -> str:
+    """Behold original utgangstekst uten aggressiv filtrering."""
     return out.strip()
-
-
-def pinecone_search(query: str, k: int = 5, index=None):
-    try:
-        if index is None or embedder is None:
-            return [], []
-
-        query_vec = embedder.encode(query, normalize_embeddings=True).tolist()
-        res = index.query(vector=query_vec, top_k=k * 3, include_metadata=True)
-        matches = res.get("matches", [])
-        if not matches:
-            return [], []
-
-        pairs = [(query, m["metadata"].get("text", "")) for m in matches if m.get("metadata")]
-        sources = [m["metadata"].get("source", "") for m in matches if m.get("metadata")]
-
-        if reranker is not None and pairs:
-            scores = reranker.predict(pairs)
-            ranked = [x for _, x in sorted(zip(scores, matches), reverse=True)]
-        else:
-            ranked = matches
-
-        texts, srcs = [], []
-        for m in ranked[:k]:
-            meta = m.get("metadata", {})
-            if meta.get("text"):
-                cleaned = clean_text(meta["text"])
-                texts.append(cleaned.strip())
-            if meta.get("source"):
-                srcs.append(meta["source"])
-        return texts, srcs
-    except Exception as e:
-        print("❌ Feil i pinecone_search:", e)
-        return [], []
-
-
-def hierarchical_search(query: str, k_primary=6, k_secondary=3, k_quotes=2):
-    try:
-        results, sources = [], []
-
-        # 1️⃣ Primær: Fiskers egne tekster
-        p_blocks, p_sources = pinecone_search(query, k=k_primary, index=pinecone_primary)
-        results.extend(p_blocks); sources.extend(p_sources)
-
-        # 2️⃣ Sekundær: Søberg m.fl.
-        s_blocks, s_sources = pinecone_search(query, k=k_secondary, index=pinecone_secondary)
-        results.extend(s_blocks); sources.extend(s_sources)
-
-        # 3️⃣ Sitater
-        q_blocks, q_sources = pinecone_search(query, k=k_quotes, index=pinecone_quotes)
-        results.extend(q_blocks); sources.extend(q_sources)
-
-        if not results:
-            return "", []
-
-        context = "\n\n---\n".join(results)
-        sources = list(dict.fromkeys(sources))
-        return context, sources
-    except Exception as e:
-        print("❌ Feil i hierarchical_search:", e)
-        return "", []
-
 # --------------------
 # Chatfunksjon
 # --------------------
@@ -219,7 +249,7 @@ def chat(user_prompt: str):
         if len(user_prompt.strip()) < 4:
             user_prompt = "Hej, hvordan arbejdede du som arkitekt?"
 
-        bio_blocks, _ = pinecone_search("Kay Fiskers liv og virke", k=3, index=pinecone_secondary)
+        bio_blocks, _ = pinecone_search("Kay Fiskers liv og virke", k=3)
         bio_context = " ".join(bio_blocks[:2]) if bio_blocks else ""
 
         context, sources = hierarchical_search(user_prompt)
@@ -272,6 +302,24 @@ def chat(user_prompt: str):
     except Exception as e:
         print("❌ Feil i chat:", e)
         return "Feil i prosesseringen."
+
+        print(f"🔎 Søk i namespace '{namespace}' → {len(matches)} treff")
+
+
+def hierarchical_search(query: str):
+    """Bruker felles søk over alle namespaces."""
+    if pinecone_index is None:
+        return "", []
+
+    context_blocks, sources = pinecone_search(query, k=8)
+    if not context_blocks:
+        print("⚠️ Ingen treff fra RAG.")
+        return "", []
+
+    context = "\n\n---\n".join(context_blocks)
+    return context, sources
+
+
 
 # --------------------
 # Chat + TTS
