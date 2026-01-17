@@ -1,246 +1,146 @@
 <!DOCTYPE html>
 <html lang="da">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fisker, arkivet og maskinen</title>
-
-  <!-- Tailwind -->
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- Retros font -->
-  <link rel="stylesheet" href="https://use.typekit.net/bgo2fdc.css">
-
-  <style>
-    /* --- generelt uttrykk inspirert av Danmarks Nationalleksikon --- */
-    body {
-      background-color: #f5f5f5;
-      color: #111;
-      font-family: "Source Sans Pro", sans-serif;
-    }
-
-    .header-bar {
-      background-color: #0050e0;
-      color: white;
-      font-size: 1rem;
-      letter-spacing: 0.2px;
-      padding: 0.8rem 1.5rem;
-      font-weight: 500;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.25);
-    }
-
-    h1 {
-      font-family: "retros", sans-serif;
-      font-weight: 400;
-      letter-spacing: -0.02em;
-      font-size: 1.9rem;
-      color: #111;
-    }
-
-    .sidebar {
-      background: #f7f7f7;
-      border-right: 1px solid #d4d4d4;
-    }
-
-    .chat-container {
-      border-left: 1px solid #d4d4d4;
-      background: white;
-    }
-
-    .bubble {
-      animation: fadeInUp 0.25s ease forwards;
-      position: relative;
-    }
-
-    @keyframes fadeInUp {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes pulseDots {
-      0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
-      40% { opacity: 1; transform: translateY(-2px); }
-    }
-
-    .typing span {
-      display: inline-block;
-      animation: pulseDots 1.2s infinite;
-    }
-
-    .typing span:nth-child(2) { animation-delay: 0.2s; }
-    .typing span:nth-child(3) { animation-delay: 0.4s; }
-
-    @keyframes readingSweep {
-      0% { background-position: -100% 0; }
-      100% { background-position: 200% 0; }
-    }
-
-    .reading {
-      background: linear-gradient(90deg, rgba(0,80,224,0.12) 0%, rgba(0,80,224,0) 80%);
-      background-size: 200% 100%;
-      animation: readingSweep 7s linear forwards;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fisker / Diskursmaskine v.8.2</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
 
-<body class="flex flex-col min-h-screen">
+        const App = () => {
+            const [documentText, setDocumentText] = useState("");
+            const [activeStrata, setActiveStrata] = useState([]);
+            const [logs, setLogs] = useState([]);
+            const [discursiveState, setDiscursiveState] = useState("SEDIMENTERING");
+            const [intensity, setIntensity] = useState(0.0);
+            const [isSynthesizing, setIsSynthesizing] = useState(false);
+            const [syntheticResponse, setSyntheticResponse] = useState("");
+            const terminalRef = useRef(null);
 
-  <!-- Øverste blå linje -->
-  <div class="header-bar">
-    Lex Fisker — et arkiv for samtale og syntese
-  </div>
+            const rams = {
+                red: "rgba(227, 34, 25, 0.5)",
+                blue: "rgba(0, 107, 180, 0.5)",
+                orange: "rgba(255, 160, 0, 0.4)",
+                gray: "#f8f8f8",
+                black: "#1a1a1a"
+            };
 
-  <!-- hovedramme -->
-  <div class="flex flex-col md:flex-row justify-center items-stretch flex-grow p-4">
-    <div class="flex bg-white rounded-md shadow-sm w-full max-w-5xl h-[90vh] overflow-hidden border border-neutral-300">
+            const words_map = useMemo(() => ({
+                "bolig": rams.blue, "monumental": rams.blue, "tradisjon": rams.red,
+                "tradition": rams.red, "ai": rams.orange, "maskin": rams.orange,
+                "disciplin": rams.blue, "social": rams.orange
+            }), [rams]);
 
-      <!-- Sidebar -->
-      <div class="hidden md:flex flex-col items-center justify-center min-w-[230px] max-w-[260px] sidebar p-5">
-        <img src="/static/img/fisker_1.jpg" alt="Kay Fisker"
-             class="w-40 h-40 rounded-full object-cover mb-4 border border-neutral-300">
-        <p class="text-center text-sm text-neutral-700 max-w-[80%] leading-snug">
-          Kay Fisker (1893–1965)<br>
-          Dansk arkitekt og professor.<br>
-          Kendt for en nøgtern, funktionel tilgang<br>til arkitekturens sociale rolle.
-        </p>
-      </div>
+            const addLog = (msg) => {
+                const message = typeof msg === 'string' ? msg : JSON.stringify(msg);
+                setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: message }].slice(-15));
+            };
 
-      <!-- Chatdel -->
-      <div class="flex flex-col flex-grow chat-container">
-        <!-- Header -->
-        <div class="px-6 py-4 border-b border-neutral-200 bg-[#fafafa]">
-          <h1>Fisker, arkivet og maskinen</h1>
-          <div id="status" class="text-sm text-neutral-500 mt-1">Modellen laster inn …</div>
-        </div>
+            useEffect(() => {
+                lucide.createIcons();
+                if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+            }, [logs, activeStrata]);
 
-        <!-- Chat -->
-        <div id="chat" class="flex-grow px-6 py-4 overflow-y-auto bg-white space-y-3 scroll-smooth">
-        </div>
+            useEffect(() => {
+                if (!documentText.trim()) return;
+                const lastChar = documentText.slice(-1);
+                if ([" . ", ".", "\n", "?"].includes(lastChar)) executeRealRAG(documentText);
+            }, [documentText]);
 
-        <!-- Input -->
-        <div class="px-6 py-4 border-t border-neutral-200 bg-[#fafafa]">
-          <div class="flex gap-3">
-            <input id="input" type="text" placeholder="Stil et spørgsmål til Fisker …"
-              class="flex-grow border border-neutral-400 rounded-md px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-neutral-400 bg-white" />
-            <button id="send"
-              class="bg-[#111] text-white text-[15px] rounded-md px-5 py-3 transition hover:bg-[#222]">
-              Send
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+            const executeRealRAG = async (text) => {
+                if (isSynthesizing) return;
+                setIsSynthesizing(true);
+                addLog(`POST /chat - Analyserer tese...`);
+                try {
+                    const response = await fetch('/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: text })
+                    });
+                    const data = await response.json();
+                    if (data.strata) {
+                        setActiveStrata(data.strata.map((s, i) => ({
+                            ...s,
+                            pos: { x: 20 + (i * 15), y: 25 + (i * 12) },
+                            color: s.type === "PRIMARY" ? rams.blue : s.type === "QUOTES" ? rams.orange : rams.red
+                        })));
+                    }
+                    setSyntheticResponse(data.text);
+                    setDiscursiveState(data.state);
+                    setIntensity(data.intensity);
+                    addLog(`Analyse fullført.`);
+                } catch (e) {
+                    addLog(`Feil: ${e.message}`);
+                } finally { setIsSynthesizing(false); }
+            };
 
-  <!-- JS -->
-  <script>
-    const chat = document.getElementById("chat");
-    const input = document.getElementById("input");
-    const sendBtn = document.getElementById("send");
-    const statusEl = document.getElementById("status");
-    const API_URL = window.location.origin + "/chat";
-
-    // --- status ---
-    async function checkModelStatus() {
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ message: "hej" })
-        });
-        const data = await res.json();
-        if (!data.text.includes("Modellen laster")) {
-          statusEl.textContent = "Modellen er klar.";
-          statusEl.classList.replace("text-neutral-500", "text-green-600");
-        } else {
-          setTimeout(checkModelStatus, 3000);
-        }
-      } catch {
-        setTimeout(checkModelStatus, 3000);
-      }
-    }
-    checkModelStatus();
-
-    sendBtn.addEventListener("click", send);
-    input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
-
-    async function send() {
-      const msg = input.value.trim();
-      if (!msg) return;
-      addMessage("user", msg);
-      input.value = "";
-      const typing = addTyping();
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: msg }),
-        });
-        const data = await res.json();
-        typing.remove();
-        const bubble = addMessage("bot", data.text || "(ingen svar)");
-        if (data.audio_url) addAudioButton(bubble, data.audio_url);
-      } catch (err) {
-        typing.remove();
-        addMessage("bot", "Fejl under samtale.");
-        console.error(err);
-      }
-    }
-
-    function addMessage(role, text) {
-      const div = document.createElement("div");
-      div.className = `bubble max-w-[85%] px-4 py-3 rounded-md text-[15px] leading-relaxed ${
-        role === "user"
-          ? "bg-[#f0f0f0] text-neutral-900 self-end"
-          : "bg-white border border-neutral-200 self-start"
-      }`;
-
-      let mainText = text;
-      let sources = "";
-      if (text.includes("Kilder:")) {
-        [mainText, sources] = text.split("Kilder:");
-        sources = sources.trim();
-      }
-      div.textContent = mainText.trim();
-
-      if (sources) {
-        const info = document.createElement("span");
-        info.textContent = " ℹ️";
-        info.className = "cursor-help text-neutral-400 ml-1";
-        info.title = sources;
-        div.appendChild(info);
-      }
-
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-      return div;
-    }
-
-    function addTyping() {
-      const div = document.createElement("div");
-      div.className = "bubble border-none bg-transparent self-start typing";
-      div.innerHTML = "<span>.</span><span>.</span><span>.</span>";
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-      return div;
-    }
-
-    function addAudioButton(bubble, audioUrl) {
-      const btn = document.createElement("button");
-      btn.innerHTML = "🔊";
-      btn.className = "absolute top-2 right-3 text-[18px] opacity-60 hover:opacity-100";
-      btn.title = "Afspil svar";
-      bubble.appendChild(btn);
-      btn.addEventListener("click", () => playAudio(audioUrl, bubble));
-      playAudio(audioUrl, bubble);
-    }
-
-    function playAudio(url, bubble) {
-      const audio = new Audio(url);
-      audio.play().catch(() => console.warn("Kunne ikke spille lyd:", url));
-      bubble.classList.add("reading");
-      audio.addEventListener("ended", () => bubble.classList.remove("reading"));
-    }
-  </script>
+            return (
+                <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col antialiased font-sans">
+                    <style>{`
+                        body { font-family: 'Inter', sans-serif; }
+                        .serif { font-family: 'Libre Baskerville', serif; }
+                        textarea::placeholder { color: #e0e0e0; }
+                        .diskurs-field { transition: all 2.5s ease; }
+                    `}</style>
+                    <header className="h-16 border-b flex items-center justify-between px-8 bg-white z-50">
+                        <div className="flex items-center gap-6">
+                            <div className="w-6 h-6 bg-[#e32219] flex items-center justify-center text-white font-bold italic">F</div>
+                            <h1 className="text-[10px] font-black uppercase tracking-widest">Active Engine 8.2</h1>
+                            <span className="text-[10px] font-mono text-blue-500 uppercase">{isSynthesizing ? 'Søger...' : discursiveState}</span>
+                        </div>
+                        <div className="w-32 h-[1px] bg-gray-100 relative overflow-hidden">
+                            <div className="h-full bg-black transition-all duration-1000" style={{ width: `${intensity * 100}%` }}></div>
+                        </div>
+                    </header>
+                    <div className="flex-grow relative overflow-hidden">
+                        <div className="absolute inset-0 opacity-10 pointer-events-none">
+                            <svg className="w-full h-full">
+                                {activeStrata.map((s, i) => <circle key={i} cx={`${s.pos.x}%`} cy={`${s.pos.y}%`} r="20%" fill={s.color} className="diskurs-field" />)}
+                            </svg>
+                        </div>
+                        <div className="absolute inset-0 z-10 pointer-events-none">
+                            {activeStrata.map((s, i) => (
+                                <div key={i} className="absolute p-4 border-l-2 border-black/5 max-w-[250px]" style={{ left: `${s.pos.x}%`, top: `${s.pos.y}%`, transform: 'translate(-50%, -50%)' }}>
+                                    <div className="text-[7px] font-mono text-gray-400 uppercase font-bold">{s.type}</div>
+                                    <p className="text-[10px] serif italic text-gray-600 leading-tight">"{s.text.substring(0, 150)}..."</p>
+                                    <div className="mt-1 text-[7px] font-mono text-gray-300">{s.ref}</div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="absolute left-8 bottom-8 w-72 z-30 pointer-events-auto bg-white/90 p-4 border text-[8px] font-mono text-gray-400 max-h-40 overflow-y-auto scrollbar-hide shadow-xl">
+                            {logs.map((log, i) => <div key={i} className="mb-1">[{log.time}] {log.msg}</div>)}
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-center z-20">
+                            <div className="max-w-xl w-full">
+                                <div className="absolute inset-0 pointer-events-none text-xl serif leading-relaxed text-transparent whitespace-pre-wrap">
+                                    {documentText.split(/(\s+)/).map((p, i) => {
+                                        const c = words_map[p.toLowerCase().replace(/[.,!?]/g, '')];
+                                        return c ? <span key={i} className="border-b border-dotted" style={{ borderColor: c }}>{p}</span> : <span key={i}>{p}</span>;
+                                    })}
+                                </div>
+                                <textarea value={documentText} onChange={e => setDocumentText(e.target.value)} placeholder="Skriv her..." className="w-full text-xl serif leading-relaxed text-black border-none focus:ring-0 p-0 bg-transparent h-[200px] resize-none" />
+                                {syntheticResponse && (
+                                    <div className="mt-12 animate-in fade-in slide-in-from-bottom-5">
+                                        <p className="text-2xl serif italic text-black leading-tight tracking-tight">"{syntheticResponse}"</p>
+                                        <div className="mt-4 text-[8px] font-mono font-bold text-gray-300 uppercase">LoRA_ENGINE_FISKER // READY</div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
 </body>
 </html>
