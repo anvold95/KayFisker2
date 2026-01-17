@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Diskursmaskine v.8.2</title>
+    <title>Fisker / Diskursmaskine v.8.2 - Live</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -13,6 +13,7 @@
 </head>
 <body>
     <div id="root"></div>
+
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
 
@@ -24,7 +25,9 @@
             const [intensity, setIntensity] = useState(0.0);
             const [isSynthesizing, setIsSynthesizing] = useState(false);
             const [syntheticResponse, setSyntheticResponse] = useState("");
+            
             const terminalRef = useRef(null);
+            const textareaRef = useRef(null);
 
             const rams = {
                 red: "rgba(227, 34, 25, 0.5)",
@@ -35,9 +38,14 @@
             };
 
             const words_map = useMemo(() => ({
-                "bolig": rams.blue, "monumental": rams.blue, "tradisjon": rams.red,
-                "tradition": rams.red, "ai": rams.orange, "maskin": rams.orange,
-                "disciplin": rams.blue, "social": rams.orange
+                "bolig": rams.blue,
+                "monumental": rams.blue,
+                "tradisjon": rams.red,
+                "tradition": rams.red,
+                "ai": rams.orange,
+                "maskin": rams.orange,
+                "disciplin": rams.blue,
+                "social": rams.orange
             }), [rams]);
 
             const addLog = (msg) => {
@@ -48,99 +56,237 @@
             useEffect(() => {
                 lucide.createIcons();
                 if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-            }, [logs, activeStrata]);
+            }, [logs, activeStrata, syntheticResponse, isSynthesizing]);
 
+            // Lytter til punktum for å trigge backend
             useEffect(() => {
                 if (!documentText.trim()) return;
-                const lastChar = documentText.slice(-1);
-                if ([" . ", ".", "\n", "?"].includes(lastChar)) executeRealRAG(documentText);
+                const lastChar = documentText.trim().slice(-1);
+                if ([" . ", ".", "\n", "?"].includes(lastChar)) {
+                    executeRealRAG(documentText);
+                }
             }, [documentText]);
 
             const executeRealRAG = async (text) => {
                 if (isSynthesizing) return;
                 setIsSynthesizing(true);
-                addLog(`POST /chat - Analyserer tese...`);
+                addLog(`POST /chat - Initierer genealogisk analyse...`);
+
                 try {
                     const response = await fetch('/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ message: text })
                     });
+
+                    if (!response.ok) throw new Error("Server respons fejlede");
+                    
                     const data = await response.json();
+                    
+                    addLog(`Mottatt respons fra LoRA-adapter.`);
+                    
                     if (data.strata) {
                         setActiveStrata(data.strata.map((s, i) => ({
                             ...s,
-                            pos: { x: 20 + (i * 15), y: 25 + (i * 12) },
+                            pos: s.pos || { x: 20 + (i * 20), y: 25 + (i * 15) },
                             color: s.type === "PRIMARY" ? rams.blue : s.type === "QUOTES" ? rams.orange : rams.red
                         })));
                     }
+
                     setSyntheticResponse(data.text);
-                    setDiscursiveState(data.state);
-                    setIntensity(data.intensity);
-                    addLog(`Analyse fullført.`);
-                } catch (e) {
-                    addLog(`Feil: ${e.message}`);
-                } finally { setIsSynthesizing(false); }
+                    setDiscursiveState(data.state || "FRIKSJON");
+                    setIntensity(data.intensity || 0.5);
+                    addLog(`✅ Analyse fuldført. Tilstand: ${data.state}`);
+
+                } catch (error) {
+                    addLog(`❌ Fejl: ${error.message}`);
+                } finally {
+                    setIsSynthesizing(false);
+                }
             };
 
             return (
-                <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col antialiased font-sans">
+                <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col antialiased overflow-hidden font-sans">
                     <style>{`
                         body { font-family: 'Inter', sans-serif; }
                         .serif { font-family: 'Libre Baskerville', serif; }
-                        textarea::placeholder { color: #e0e0e0; }
-                        .diskurs-field { transition: all 2.5s ease; }
+                        textarea::placeholder { color: #e0e0e0; font-style: italic; }
+                        .diskurs-field { transition: all 2.5s cubic-bezier(0.23, 1, 0.32, 1); }
+                        @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+                        .scan-line { animation: scan-line 4s linear infinite; }
+                        .scrollbar-hide::-webkit-scrollbar { display: none; }
+                        @keyframes drift { 0% { transform: translate(0, 0); } 50% { transform: translate(10px, -10px); } 100% { transform: translate(0, 0); } }
+                        .animate-drift { animation: drift 15s ease-in-out infinite; }
                     `}</style>
-                    <header className="h-16 border-b flex items-center justify-between px-8 bg-white z-50">
-                        <div className="flex items-center gap-6">
-                            <div className="w-6 h-6 bg-[#e32219] flex items-center justify-center text-white font-bold italic">F</div>
-                            <h1 className="text-[10px] font-black uppercase tracking-widest">Active Engine 8.2</h1>
-                            <span className="text-[10px] font-mono text-blue-500 uppercase">{isSynthesizing ? 'Søger...' : discursiveState}</span>
+
+                    <header className="h-16 bg-white border-b border-gray-100 flex items-center justify-between px-8 z-50">
+                        <div className="flex items-center gap-10">
+                            <div className="flex items-center gap-3">
+                                <div className="w-6 h-6 bg-[#e32219] flex items-center justify-center text-[10px] text-white font-black italic shadow-sm">F</div>
+                                <h1 className="text-[10px] font-black uppercase tracking-[0.3em]">Active Engine 8.2</h1>
+                            </div>
+                            
+                            <div className="flex items-center gap-6">
+                                <div className="flex flex-col">
+                                    <span className="text-[7px] font-mono text-gray-400 uppercase tracking-tighter">System Status</span>
+                                    <span className={`text-[10px] font-black tracking-widest ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-blue-500'}`}>
+                                        {isSynthesizing ? 'SYNTETISERER...' : discursiveState}
+                                    </span>
+                                </div>
+                                <div className="w-24 h-[1px] bg-gray-100 relative overflow-hidden">
+                                    <div className="h-full bg-black transition-all duration-1000" style={{ width: `${intensity * 100}%` }}></div>
+                                </div>
+                            </div>
                         </div>
-                        <div className="w-32 h-[1px] bg-gray-100 relative overflow-hidden">
-                            <div className="h-full bg-black transition-all duration-1000" style={{ width: `${intensity * 100}%` }}></div>
+                        
+                        <div className="flex gap-10 items-center">
+                            <div className="flex flex-col items-end">
+                                <span className="text-[8px] font-mono text-gray-300 uppercase tracking-widest">Live Archive Sync</span>
+                                <span className="text-[8px] font-mono text-gray-400 italic uppercase underline underline-offset-4 decoration-red-200">fisker-lora-active</span>
+                            </div>
+                            <i data-lucide="code" className="w-4 h-4 text-gray-200"></i>
                         </div>
                     </header>
-                    <div className="flex-grow relative overflow-hidden">
-                        <div className="absolute inset-0 opacity-10 pointer-events-none">
+
+                    <div className="flex-grow relative bg-white overflow-hidden">
+                        
+                        {/* Dynamisk Scan Line under syntese */}
+                        {isSynthesizing && (
+                            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-30">
+                                <div className="w-full h-1 bg-red-500 scan-line blur-[3px]"></div>
+                            </div>
+                        )}
+
+                        {/* LAG 1: DET DISKURSIVE FELTET (SVG med gradienter) */}
+                        <div className="absolute inset-0 z-0 pointer-events-none opacity-20">
                             <svg className="w-full h-full">
-                                {activeStrata.map((s, i) => <circle key={i} cx={`${s.pos.x}%`} cy={`${s.pos.y}%`} r="20%" fill={s.color} className="diskurs-field" />)}
+                                <defs>
+                                    {activeStrata.map((s, i) => (
+                                        <radialGradient id={`grad-${i}`} key={i}>
+                                            <stop offset="0%" stopColor={s.color} stopOpacity="0.7" />
+                                            <stop offset="100%" stopColor={s.color} stopOpacity="0" />
+                                        </radialGradient>
+                                    ))}
+                                </defs>
+                                {activeStrata.map((s, i) => (
+                                    <circle key={i} cx={`${s.pos.x}%`} cy={`${s.pos.y}%`} r={`${15 + (intensity * 20)}%`} fill={`url(#grad-${i})`} className="diskurs-field" />
+                                ))}
                             </svg>
                         </div>
+
+                        {/* LAG 2: FRAGMENTER (Flytende kilder) */}
                         <div className="absolute inset-0 z-10 pointer-events-none">
                             {activeStrata.map((s, i) => (
-                                <div key={i} className="absolute p-4 border-l-2 border-black/5 max-w-[250px]" style={{ left: `${s.pos.x}%`, top: `${s.pos.y}%`, transform: 'translate(-50%, -50%)' }}>
-                                    <div className="text-[7px] font-mono text-gray-400 uppercase font-bold">{s.type}</div>
-                                    <p className="text-[10px] serif italic text-gray-600 leading-tight">"{s.text.substring(0, 150)}..."</p>
-                                    <div className="mt-1 text-[7px] font-mono text-gray-300">{s.ref}</div>
+                                <div 
+                                    key={i} 
+                                    className="absolute p-5 border-l-2 border-black/10 max-w-[260px] transition-all duration-[2000ms] animate-drift" 
+                                    style={{ 
+                                        left: `${s.pos.x}%`, 
+                                        top: `${s.pos.y}%`, 
+                                        transform: 'translate(-50%, -50%)',
+                                        animationDelay: `${i * 1.5}s`
+                                    }}
+                                >
+                                    <div className="text-[7px] font-mono text-gray-400 uppercase tracking-widest mb-2 font-bold flex items-center gap-2">
+                                        <i data-lucide="database" className="w-2 h-2"></i> {s.type} // {s.year || 'ARKIV'}
+                                    </div>
+                                    <p className="text-[10px] serif italic text-gray-600 leading-relaxed bg-white/70 backdrop-blur-[2px] p-2">
+                                        "{s.text.substring(0, 180)}..."
+                                    </p>
+                                    <div className="mt-2 text-[7px] font-mono text-gray-400 font-bold uppercase tracking-tighter">{s.ref}</div>
                                 </div>
                             ))}
                         </div>
-                        <div className="absolute left-8 bottom-8 w-72 z-30 pointer-events-auto bg-white/90 p-4 border text-[8px] font-mono text-gray-400 max-h-40 overflow-y-auto scrollbar-hide shadow-xl">
-                            {logs.map((log, i) => <div key={i} className="mb-1">[{log.time}] {log.msg}</div>)}
+
+                        {/* LAG 3: TERMINAL (RAG Monitor) */}
+                        <div className="absolute left-8 bottom-8 w-80 z-30 pointer-events-auto">
+                            <div className="bg-white/95 backdrop-blur-md border border-gray-100 p-6 shadow-2xl">
+                                <header className="flex justify-between items-center mb-4 border-b border-gray-100 pb-2">
+                                    <div className="flex items-center gap-2">
+                                        <i data-lucide="terminal" className="w-3 h-3 text-gray-400"></i>
+                                        <span className="text-[9px] font-black uppercase text-gray-400 tracking-[0.2em]">Genealogical Analysis</span>
+                                    </div>
+                                    <div className={`w-1.5 h-1.5 rounded-full ${isSynthesizing ? 'bg-orange-500 animate-pulse' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]'}`}></div>
+                                </header>
+                                <div ref={terminalRef} className="font-mono text-[8px] space-y-2 text-gray-400 max-h-56 overflow-y-auto scrollbar-hide">
+                                    {logs.length === 0 && <p className="opacity-40 italic uppercase">System klar. Venter på tese...</p>}
+                                    {logs.map((log, i) => (
+                                        <div key={i} className="flex gap-2 animate-in fade-in slide-in-from-left-1 duration-300">
+                                            <span className="opacity-30 tabular-nums">[{log.time}]</span>
+                                            <span className={i === logs.length - 1 ? "text-black font-bold" : ""}>{log.msg}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
+
+                        {/* LAG 4: SKRIVEFLATE (Hovedobjektet) */}
                         <div className="absolute inset-0 flex items-center justify-center z-20">
-                            <div className="max-w-xl w-full">
-                                <div className="absolute inset-0 pointer-events-none text-xl serif leading-relaxed text-transparent whitespace-pre-wrap">
-                                    {documentText.split(/(\s+)/).map((p, i) => {
-                                        const c = words_map[p.toLowerCase().replace(/[.,!?]/g, '')];
-                                        return c ? <span key={i} className="border-b border-dotted" style={{ borderColor: c }}>{p}</span> : <span key={i}>{p}</span>;
+                            <div className="max-w-xl w-full relative">
+                                
+                                {/* Plastisk deformasjon / Highlight lag */}
+                                <div className="absolute inset-0 pointer-events-none select-none text-xl serif leading-relaxed text-transparent whitespace-pre-wrap break-words">
+                                    {documentText.split(/(\s+)/).map((part, i) => {
+                                        const clean = part.toLowerCase().replace(/[.,!?]/g, '');
+                                        const color = words_map[clean];
+                                        return color ? (
+                                            <span key={i} className="inline-block transition-all duration-700 border-b-[1.5px] border-dotted opacity-80" style={{ borderColor: color }}>{part}</span>
+                                        ) : <span key={i}>{part}</span>;
                                     })}
                                 </div>
-                                <textarea value={documentText} onChange={e => setDocumentText(e.target.value)} placeholder="Skriv her..." className="w-full text-xl serif leading-relaxed text-black border-none focus:ring-0 p-0 bg-transparent h-[200px] resize-none" />
+
+                                <textarea 
+                                    ref={textareaRef}
+                                    value={documentText} 
+                                    onChange={e => setDocumentText(e.target.value)} 
+                                    placeholder="Indtast din tese her..." 
+                                    className={`w-full text-xl serif leading-relaxed text-[#1a1a1a] border-none focus:ring-0 p-0 placeholder-gray-100 resize-none bg-transparent h-[250px] transition-all duration-1000 ${isSynthesizing ? 'opacity-30 blur-[0.4px]' : 'opacity-100'}`}
+                                    spellCheck="false"
+                                />
+
+                                {/* SYNTETISK RESPONS (Maskinens tale) */}
                                 {syntheticResponse && (
-                                    <div className="mt-12 animate-in fade-in slide-in-from-bottom-5">
-                                        <p className="text-2xl serif italic text-black leading-tight tracking-tight">"{syntheticResponse}"</p>
-                                        <div className="mt-4 text-[8px] font-mono font-bold text-gray-300 uppercase">LoRA_ENGINE_FISKER // READY</div>
+                                    <div className="mt-16 animate-in fade-in slide-in-from-bottom-10 duration-1000">
+                                        <div className="flex items-center gap-4 mb-6 opacity-20">
+                                            <div className="h-[1px] flex-grow bg-black"></div>
+                                            <span className="text-[9px] font-mono font-black text-black uppercase tracking-[0.5em]">Syntetisk_Respons</span>
+                                            <div className="h-[1px] flex-grow bg-black"></div>
+                                        </div>
+                                        <p className="text-3xl md:text-4xl serif italic text-black leading-[1.05] tracking-tight">
+                                            "{syntheticResponse}"
+                                        </p>
+                                        <div className="mt-10 flex justify-between items-center text-[8px] font-mono font-bold text-gray-400 uppercase tracking-widest">
+                                            <span className="flex items-center gap-3">
+                                                <i data-lucide="cpu" className="w-3 h-3 text-red-500"></i> LoRA_ENGINE_FISKER_V1
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <i data-lucide="activity" className="w-3 h-3"></i> ANALYSIS: COMPLETE
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
                             </div>
                         </div>
                     </div>
+
+                    <footer className="h-14 bg-white border-t border-gray-50 flex items-center justify-between px-10 text-[9px] font-black uppercase tracking-[0.25em] text-gray-400 italic">
+                        <div className="flex gap-12">
+                            <span className="flex items-center gap-3 text-black">
+                                <div className="w-2 h-2 bg-[#e32219]"></div> KADK / Research Unit
+                            </span>
+                            <span className="hidden md:block">Metode: Diskursiv Analytik // {isSynthesizing ? 'BUSY' : 'READY'}</span>
+                        </div>
+                        <div className="flex gap-10">
+                            <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]); addLog("Sesjon restartet.");}} className="hover:text-black transition-all">Restart</button>
+                            <span className="opacity-50 tracking-tighter">v.8.2.0_LIVE</span>
+                        </div>
+                    </footer>
                 </div>
             );
         };
-        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
