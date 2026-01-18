@@ -72,8 +72,17 @@
             useEffect(() => {
                 const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
                 window.addEventListener('resize', onResize);
-                return () => window.removeEventListener('resize', onResize);
-            }, []);
+                
+                // Oppdater viewport når sidebar toggles
+                const timer = setTimeout(() => {
+                    setViewport({ w: window.innerWidth, h: window.innerHeight });
+                }, 100);
+                
+                return () => {
+                    window.removeEventListener('resize', onResize);
+                    clearTimeout(timer);
+                };
+            }, [selectedSources.length, showGenealogy]);
 
             const getSmartPosition = (year, existingNodes = []) => {
                 const allNodes = [...activeStrata, ...visualNodes, ...existingNodes];
@@ -81,40 +90,48 @@
                 const age = 2024 - yearNum;
                 const baseDepth = 15 + Math.min((age / 100) * 60, 60);
                 
-                const forbiddenZone = { xMin: 15, xMax: 85, yMin: 65, yMax: 100 };
-                const nodeWidth = 28;
-                const nodeHeight = 20;
-                const minDistance = 35;
+                // KRITISK: Hele senter-området er forbudt (dekker svarboks fullstendig)
+                const forbiddenZone = { xMin: 10, xMax: 90, yMin: 60, yMax: 100 };
+                const nodeWidth = 30;
+                const nodeHeight = 24;
+                const minDistance = 38;
                 
                 const isValidPosition = (x, y) => {
+                    // Hard reject på forbidden zone
                     if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
                         y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) return false;
-                    if (x < 5 || x > 95 || y < 5 || y > 85) return false;
                     
+                    // Hard reject på kanter
+                    if (x < 5 || x > 95 || y < 5 || y > 58) return false;
+                    
+                    // Sjekk avstand til andre noder
                     for (const node of allNodes) {
                         const dx = Math.abs(node.pos.x - x);
                         const dy = Math.abs(node.pos.y - y);
-                        if (dx < minDistance && dy < (nodeHeight + 2)) return false;
+                        if (dx < minDistance && dy < (nodeHeight + 4)) return false;
                     }
                     return true;
                 };
                 
-                for (let radius = 0; radius <= 40; radius += 10) {
-                    for (let i = 0; i < 16; i++) {
-                        const angle = (i / 16) * 2 * Math.PI;
+                // Prøv concentric circles først
+                for (let radius = 0; radius <= 50; radius += 12) {
+                    for (let i = 0; i < 24; i++) {
+                        const angle = (i / 24) * 2 * Math.PI;
                         const x = 50 + radius * Math.cos(angle);
-                        const y = baseDepth + radius * 0.5 * Math.sin(angle);
+                        const y = baseDepth + radius * 0.4 * Math.sin(angle);
                         if (isValidPosition(x, y)) return { x, y };
                     }
                 }
                 
-                for (let y = 10; y <= 60; y += 8) {
-                    for (let x = 10; x <= 90; x += 8) {
+                // Grid search i øvre halvdel
+                for (let y = 8; y <= 55; y += 9) {
+                    for (let x = 8; x <= 92; x += 9) {
                         if (isValidPosition(x, y)) return { x, y };
                     }
                 }
                 
-                return { x: allNodes.length % 2 === 0 ? 8 : 92, y: baseDepth };
+                // Desperat fallback - sides only
+                return { x: allNodes.length % 2 === 0 ? 8 : 92, y: 20 };
             };
 
             const handleMouseDown = (e, nodeId) => {
@@ -337,17 +354,37 @@
                     const sourceB = activeStrata.find(s => s.ref === shift.source_b);
                     if (!sourceA || !sourceB) return null;
                     
-                    const strokeColor = shift.type === "MAJOR_SHIFT" ? "#991b1b" : "#c2410c";
-                    const strokeWidth = shift.type === "MAJOR_SHIFT" ? 2 : 1;
+                    const isMajor = shift.type === "MAJOR_SHIFT";
+                    const strokeColor = isMajor ? "#dc2626" : "#ea580c";
+                    const strokeWidth = isMajor ? 3 : 2;
+                    
+                    const midX = (sourceA.pos.x + sourceB.pos.x) / 2;
+                    const midY = (sourceA.pos.y + sourceB.pos.y) / 2;
                     
                     return (
                         <g key={`shift-${i}`}>
+                            {/* Hovedlinje */}
                             <line 
                                 x1={`${sourceA.pos.x}%`} y1={`${sourceA.pos.y}%`}
                                 x2={`${sourceB.pos.x}%`} y2={`${sourceB.pos.y}%`}
                                 stroke={strokeColor} strokeWidth={strokeWidth}
-                                strokeDasharray="5,3" opacity="0.4"
+                                strokeDasharray={isMajor ? "10,5" : "6,3"} 
+                                opacity="0.7"
+                                className={isMajor ? "animate-pulse" : ""}
                             />
+                            {/* Midtpunkt markør */}
+                            <circle 
+                                cx={`${midX}%`} cy={`${midY}%`} r="4"
+                                fill={strokeColor} opacity="0.8"
+                            />
+                            {/* Label */}
+                            <text 
+                                x={`${midX}%`} y={`${midY - 1}%`}
+                                className="text-[9px] fill-white font-mono font-black"
+                                textAnchor="middle"
+                                style={{ paintOrder: 'stroke', stroke: strokeColor, strokeWidth: 3 }}>
+                                {isMajor ? '⚡ BRUDD' : 'skift'}
+                            </text>
                         </g>
                     );
                 });
@@ -362,13 +399,32 @@
                 return connectedNodes.map((node, i) => {
                     if (i === 0) return null;
                     const prev = connectedNodes[i - 1];
+                    
+                    // Beregn midtpunkt for pil
+                    const midX = (prev.pos.x + node.pos.x) / 2;
+                    const midY = (prev.pos.y + node.pos.y) / 2;
+                    
                     return (
-                        <line key={`concept-${i}`}
-                            x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
-                            x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                            stroke="#6b21a8" strokeWidth="1.5"
-                            strokeDasharray="3,2" opacity="0.5"
-                        />
+                        <g key={`concept-${i}`}>
+                            <defs>
+                                <marker id={`arrow-${i}`} markerWidth="8" markerHeight="8" 
+                                    refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+                                    <path d="M0,0 L0,6 L8,3 z" fill="#7e22ce" />
+                                </marker>
+                            </defs>
+                            <line 
+                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
+                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
+                                stroke="#7e22ce" strokeWidth="2.5"
+                                strokeDasharray="6,4" opacity="0.7"
+                                markerEnd={`url(#arrow-${i})`}
+                            />
+                            {/* Tidslinje-indikator */}
+                            <circle 
+                                cx={`${midX}%`} cy={`${midY}%`} r="3"
+                                fill="#a855f7" opacity="0.8"
+                            />
+                        </g>
                     );
                 });
             };
@@ -389,8 +445,8 @@
                         .glass-membrane { background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05)); backdrop-filter: blur(50px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.3); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.1); }
                         
                         .source-node { transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); cursor: move; }
-                        .source-node:hover { scale: 1.03; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.15); width: 380px !important; }
-                        .source-node.active { border: 2px solid black; box-shadow: 0 20px 60px rgba(0,0,0,0.15); z-index: 50; width: 450px !important; background: rgba(255, 255, 255, 0.95); }
+                        .source-node:hover { scale: 1.01; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.15); width: 340px !important; }
+                        .source-node.active { border: 2px solid black; box-shadow: 0 20px 60px rgba(0,0,0,0.15); z-index: 50; width: 400px !important; background: rgba(255, 255, 255, 0.95); }
                         .source-node.dragging { opacity: 0.7; cursor: grabbing; z-index: 200; }
                         
                         .visual-node { border-radius: 4px; overflow: hidden; border: 4px solid white; box-shadow: 0 10px 30px rgba(0,0,0,0.15); opacity: 0; animation: pop-in 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; animation-delay: 1.2s; }
