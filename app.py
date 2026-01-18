@@ -9,6 +9,7 @@ from collections import defaultdict, Counter
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.concurrency import run_in_threadpool
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from peft import PeftModel
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
@@ -869,12 +870,19 @@ async def api_chat(req: Request):
     generated_text = re.sub(r"^(System:|Spørgsmål:|###).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
-    # Bygg strata MED relevante utdrag (FORBEDRET fra v.9.9)
+    # Bygg strata MED relevante utdrag (FORBEDRET - kjører i threadpool)
     strata = []
     for i, m in enumerate(matches):
         full_text = m["metadata"].get("text", "")
         
-        excerpt_info = extract_most_relevant_excerpt(full_text, generated_text, min_words=25, max_words=85)
+        # Kjør tung embedding-operasjon i threadpool
+        excerpt_info = await run_in_threadpool(
+            extract_most_relevant_excerpt, 
+            full_text, 
+            generated_text, 
+            25, 
+            85
+        )
         
         strata.append({
             "id": f"source_{i}",
@@ -888,8 +896,13 @@ async def api_chat(req: Request):
             "score": m.get("score", 0.0)
         })
 
-    # FULLSTENDIG ANALYSE (Epistemisk + Genealogisk)
-    genealogy = perform_full_genealogical_analysis(strata, generated_text, user_prompt)
+    # FULLSTENDIG ANALYSE (Epistemisk + Genealogisk) - kjører i threadpool
+    genealogy = await run_in_threadpool(
+        perform_full_genealogical_analysis, 
+        strata, 
+        generated_text, 
+        user_prompt
+    )
     visuals = extract_visuals(generated_text)
     
     # Bestem state basert på analyse
