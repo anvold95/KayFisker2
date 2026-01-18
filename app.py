@@ -58,11 +58,12 @@ embedder = None
 reranker = None
 pinecone_index = None
 
-# Mock database for visuals (Disse bør erstattes med dine egne scannede filer)
+# --- VISUAL DATABASE (Utvidet) ---
 VISUALS_DB = {
     "vestersøhus": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Vesters%C3%B8hus_01.jpg/640px-Vesters%C3%B8hus_01.jpg", "type": "FOTO"},
     "dronningegården": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Dronningeg%C3%A5rden_Copenhagen_02.jpg/640px-Dronningeg%C3%A5rden_Copenhagen_02.jpg", "type": "FOTO"},
     "gullfoss": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Gullfoss_Copenhagen_01.jpg/640px-Gullfoss_Copenhagen_01.jpg", "type": "FOTO"},
+    "gullfosshus": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Gullfoss_Copenhagen_01.jpg/640px-Gullfoss_Copenhagen_01.jpg", "type": "FOTO"},
     "aarhus universitet": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Aarhus_Universitet_01.jpg/640px-Aarhus_Universitet_01.jpg", "type": "FOTO"},
     "statsprøveanstalten": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Statspr%C3%B8veanstalten_01.jpg/640px-Statspr%C3%B8veanstalten_01.jpg", "type": "FOTO"},
     "plan": {"url": "https://images.unsplash.com/photo-1629196914375-f7e48f477b6d?q=80&w=600&auto=format&fit=crop", "type": "TEGNING"},
@@ -152,21 +153,33 @@ def normalize_orthography(txt: str) -> str:
     return txt
 
 def enhance_query(user_prompt: str) -> str:
-    """Utvider query basert på intensjonsdeteksjon"""
+    """Utvider query basert på intensjonsdeteksjon og nøkkelverk"""
     prompt_lower = user_prompt.lower()
     
-    # Detekter spørsmålstype
+    # Sjekkliste for hovedverk - sikrer at vi treffer riktig i arkivet
+    works_map = {
+        "vestersøhus": "Vestersøhus Kay Fisker Vester Søgade København 1935",
+        "dronningegården": "Dronningegården Kay Fisker Dronningens Tværgade",
+        "gullfoss": "Gullfosshus Kay Fisker Artillerivej",
+        "aarhus universitet": "Aarhus Universitet bygninger Kay Fisker C.F. Møller",
+        "statsprøveanstalten": "Statsprøveanstalten Kay Fisker Amager Boulevard"
+    }
+
+    # Hvis brukeren spør om et kjent verk, injiser spesifikke søkeord
+    for work, expansion in works_map.items():
+        if work in prompt_lower:
+            return f"{expansion} {user_prompt}"
+
     is_biographical = any(w in prompt_lower for w in ["hvem", "hvad", "når", "hvor", "liv", "karriere"])
     is_theoretical = any(w in prompt_lower for w in ["hvorfor", "hvordan", "prinsipper", "teori", "tanker"])
     is_specific = any(w in prompt_lower for w in ["bolig", "monumental", "skole", "bygning", "projekt"])
     
-    # Strategisk expansion
     if is_biographical:
         return f"Kay Fisker biografi liv karriere {user_prompt}"
     elif is_theoretical:
         return f"arkitektonisk teori princip filosofi {user_prompt}"
     elif is_specific:
-        return user_prompt  # Behold spesifikk query
+        return user_prompt
     
     return f"arkitektur Kay Fisker {user_prompt}"
 
@@ -175,7 +188,6 @@ def extract_temporal_context(user_prompt: str, timeline: str) -> str:
     if not timeline:
         return ""
     
-    # Parse timeline
     periods = []
     for line in timeline.split("\n"):
         if match := re.match(r"(\d{4})[-–]?(\d{4})?: (.+)", line):
@@ -186,13 +198,12 @@ def extract_temporal_context(user_prompt: str, timeline: str) -> str:
                 "event": event.strip()
             })
     
-    # Finn relevante perioder (keyword matching)
     keywords = set(user_prompt.lower().split())
     relevant = []
     
     for p in periods:
         event_words = set(p["event"].lower().split())
-        if keywords & event_words:  # Set intersection
+        if keywords & event_words:
             relevant.append(p)
     
     if relevant:
@@ -204,9 +215,7 @@ def extract_temporal_context(user_prompt: str, timeline: str) -> str:
     return ""
 
 def diversify_sources(matches: list, max_per_year: int = 2, max_per_type: int = 3) -> list:
-    """
-    Sørger for temporal og type-basert spredning av kilder
-    """
+    """Sørger for temporal og type-basert spredning av kilder"""
     year_count = defaultdict(int)
     type_count = defaultdict(int)
     diversified = []
@@ -215,7 +224,6 @@ def diversify_sources(matches: list, max_per_year: int = 2, max_per_type: int = 
         year = m["metadata"].get("year", "unknown")
         doc_type = m["metadata"].get("__ns", "unknown")
         
-        # Sjekk om vi kan inkludere denne kilden
         if (year_count[year] < max_per_year and 
             type_count[doc_type] < max_per_type):
             diversified.append(m)
@@ -225,7 +233,6 @@ def diversify_sources(matches: list, max_per_year: int = 2, max_per_type: int = 
         if len(diversified) >= 6:
             break
             
-    # Hvis vi ikke fikk nok diverse kilder, fyll opp med beste matches
     if len(diversified) < 4:
         for m in matches:
             if m not in diversified:
@@ -247,23 +254,18 @@ def extract_visuals(text: str) -> list:
 
 # --- GENEALOGISK ANALYSE ---
 def find_attributable_segments(source_text: str, response_text: str) -> list:
-    """
-    Finner segmenter i kildetekst som matcher med responsen.
-    Bruker sliding window + similarity scoring.
-    """
+    """Finner segmenter i kildetekst som matcher med responsen."""
     if not embedder:
         return []
 
-    # Tokeniser kildetekst
     source_words = source_text.split()
     if len(source_words) < 10:
         return []
 
     segments = []
-    window_size = 12  # Ord per segment
-    step = 6 # Overlapp
+    window_size = 12
+    step = 6
 
-    # Generer kildesegmenter
     for i in range(0, len(source_words) - window_size + 1, step):
         segment = " ".join(source_words[i:i+window_size])
         segments.append({
@@ -275,15 +277,12 @@ def find_attributable_segments(source_text: str, response_text: str) -> list:
     if not segments:
         return []
 
-    # Embed responsen og alle segmentene
     response_emb = embedder.encode(response_text, convert_to_tensor=True)
     segment_texts = [s["text"] for s in segments]
     segment_embs = embedder.encode(segment_texts, convert_to_tensor=True)
 
-    # Beregn cosine similarity mellom responsen og hvert kilde-segment
     similarities = util.cos_sim(response_emb, segment_embs)[0].cpu().numpy()
 
-    # Finn topp-segmenter over terskel
     threshold = 0.45
     attributed = []
 
@@ -295,25 +294,22 @@ def find_attributable_segments(source_text: str, response_text: str) -> list:
                 "position": f"{segments[idx]['start_idx']}-{segments[idx]['end_idx']}"
             })
 
-    # Sorter etter likhet
     attributed.sort(key=lambda x: x["similarity"], reverse=True)
-    return attributed[:3]  # Returner topp 3 viktigste segmenter
+    return attributed[:3]
 
 def analyze_source_relations(strata: list, response_text: str, query: str) -> dict:
-    """
-    Avansert genealogisk analyse av forholdet mellom kilder og svar.
-    """
+    """Avansert genealogisk analyse av forholdet mellom kilder og svar."""
     if not embedder:
         return {}
 
     analysis = {
-        "source_attributions": [],   # Hva fra hver kilde ble brukt
-        "source_comparisons": [],    # Hvordan kilder forholder seg til hverandre
-        "query_source_relations": [], # Hvordan kilder svarer på query
-        "response_grounding": []     # Hvor godt responsen er grounded i kilder
+        "source_attributions": [],
+        "source_comparisons": [],
+        "query_source_relations": [],
+        "response_grounding": []
     }
 
-    # 1. Attributions: Finn konkrete segmenter fra hver kilde
+    # 1. Attributions
     for s in strata:
         attributed = find_attributable_segments(s["text"], response_text)
         if attributed:
@@ -324,13 +320,15 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
                 "attribution_strength": sum(seg["similarity"] for seg in attributed) / len(attributed)
             })
 
-    # 2. Source Comparisons: Semantisk likhet mellom kilder (resonans)
+    # 2. Source Comparisons
     if len(strata) >= 2:
         source_texts = [s["text"] for s in strata]
         source_embs = embedder.encode(source_texts, convert_to_tensor=True)
+        
         for i in range(len(strata)):
             for j in range(i + 1, len(strata)):
                 similarity = util.cos_sim(source_embs[i], source_embs[j])[0][0].item()
+                
                 if similarity > 0.4:
                     analysis["source_comparisons"].append({
                         "source_a": strata[i]["ref"],
@@ -344,16 +342,18 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
     for s in strata:
         source_emb = embedder.encode(s["text"], convert_to_tensor=True)
         relevance = util.cos_sim(query_emb, source_emb)[0][0].item()
+        
         analysis["query_source_relations"].append({
             "source_ref": s["ref"],
             "query_relevance": float(relevance),
             "relevance_category": "HØY" if relevance > 0.6 else "MEDIUM" if relevance > 0.4 else "LAV"
         })
 
-    # 4. Response Grounding: Samlet forankring
+    # 4. Response Grounding
     response_emb = embedder.encode(response_text, convert_to_tensor=True)
     combined_source_text = " ".join([s["text"] for s in strata])
     combined_emb = embedder.encode(combined_source_text, convert_to_tensor=True)
+    
     grounding_score = util.cos_sim(response_emb, combined_emb)[0][0].item()
     
     analysis["response_grounding"] = {
@@ -382,32 +382,23 @@ def _fetch_ns(ns: str, qvec, top_k: int):
         return []
 
 def pinecone_search_logic(user_prompt: str, total_results: int = 6):
-    """
-    Forbedret RAG-søk med:
-    - Query enhancement
-    - Strategisk namespace-fordeling
-    - Temporal diversifisering
-    - Reranking
-    """
+    """Forbedret RAG-søk med full logikk"""
     if not (pinecone_index and embedder): 
         return []
     
     print(f"\n🔍 Analyserer: '{user_prompt}'")
-    
-    # 1. Enhance query for bedre semantic matching
     enhanced = enhance_query(user_prompt)
     print(f"   ↳ Utvida til: '{enhanced}'")
     qvec = embedder.encode(enhanced).tolist()
     
-    # 2. Strategisk namespace-fordeling (ikke 8×3=24, men 6+3+3=12)
     ns_quotas = {
-        "primary": 6,    # Primærkilder (bøker, artikler)
-        "secondary": 3,  # Biografisk/kontekstuelt
-        "quotes": 3      # Sitater
+        "primary": 6,
+        "secondary": 3,
+        "quotes": 3
     }
     weights = {
         "primary": 1.0, 
-        "secondary": 1.3,  # Biografisk får litt høyere vekt
+        "secondary": 1.3,
         "quotes": 0.5
     }
     
@@ -423,7 +414,6 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
         print("   ⚠️ Ingen matches funnet")
         return []
     
-    # 3. Filter og clean (din opprinnelige logikk)
     filtered = []
     for m in pool:
         md = m.get("metadata") or {}
@@ -431,18 +421,14 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
         txt = normalize_orthography(raw)
         txt = clean_text(txt)
         
-        # Kvalitetskontroll
         if not txt or len(txt.split()) < 8 or len(txt) > 800:
             continue
         
-        # OCR quality scoring
         base_weight = m["weight"]
         
-        # Penaliser svensk OCR-feil
         if (txt.count("ä") + txt.count("ö")) > 8 and (txt.count("æ") + txt.count("ø")) < 2:
             base_weight *= 0.6
         
-        # Penaliser for mange spesialtegn (OCR-støy)
         special_chars = len(re.findall(r"[^a-zA-ZæøåÆØÅ0-9.,:;?!()\-\s]", txt))
         if special_chars > 15:
             base_weight *= 0.7
@@ -457,19 +443,16 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
     
     print(f"   ✓ {len(filtered)} kilder etter filtrering")
     
-    # 4. Reranking med cross-encoder
     if reranker is not None and filtered:
         print("   🔄 Reranker...")
         pairs = [(user_prompt, x["metadata"]["text"]) for x in filtered]
         scores = reranker.predict(pairs)
         filtered = [x for _, x in sorted(zip(scores, filtered), key=lambda z: z[0], reverse=True)]
     
-    # 5. NYTT: Diversifiser for temporal og type-spredning
     filtered = diversify_sources(filtered, max_per_year=2, max_per_type=3)
     
     print(f"   ✅ Returnerer {len(filtered)} diverse kilder")
     
-    # Debug output
     for i, m in enumerate(filtered[:total_results]):
         md = m["metadata"]
         print(f"      [{i+1}] {md.get('__ns', '?').upper()} | {md.get('year', '?')} | {md.get('text', '')[:60]}...")
@@ -487,23 +470,21 @@ async def api_chat(req: Request):
             "error": "Spørsmål for kort - skriv minst noen få ord"
         }, status_code=400)
     
-    # 1. RAG Logikk med forbedringer
+    # 1. RAG
     filtered_matches = pinecone_search_logic(user_prompt, total_results=6)
     
-    # 2. Bygg kontekst
+    # 2. Context
     context = "\n---\n".join([m["metadata"]["text"] for m in filtered_matches])
     
-    # Bio-kontekst fra secondary sources
     bio_context = ""
     for m in filtered_matches:
         if m["metadata"].get("__ns") == "secondary":
             bio_context = m["metadata"]["text"]
             break
     
-    # Temporal kontekst fra timeline
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     
-    # 3. Formater 'Strata' for Diskursmaskinen
+    # 3. Strata
     strata = []
     for i, m in enumerate(filtered_matches):
         md = m["metadata"]
@@ -515,83 +496,56 @@ async def api_chat(req: Request):
             "type": md.get("__ns", "primary").upper()
         })
 
-    # 4. Forbedret system-prompt
+    # 4. Prompt Engineering (STRENG FOR Å UNNGÅ HALLUSINASJON)
     system_prompt = (
-        "Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiet. "
-        "Du svarer som deg selv, i nøgternt dansk fagsprog præget af præcision og disciplin. "
-        "Skriv i korte, tydelige sætninger – højst fem til seks per svar. "
-        "Dine svar skal handle om arkitektur, undervisning og bygningers samfundsmæssige rolle.\n\n"
+        "Du er arkitekten Kay Fisker (1893–1965). "
+        "Du svarer på spørgsmål om dit liv og virke i et nøgternt, præcist dansk fagsprog. "
+        "VIGTIGT: Du må KUN bruge information fra det medfølgende 'KILDEMATERIALE'. "
+        "Hvis svaret ikke findes direkte i kilderne, skal du svare: 'Det fremgår ikke af det materiale, jeg har her'. "
+        "Du må IKKE opfinde fakta, årstal eller steder. Hvis du ikke ved det, så sig det. "
+        "Henvis til kilder med tallene [1], [2] osv. "
+        "Hold dine svar korte (max 4-5 sætninger)."
     )
     
     if bio_context:
-        system_prompt += f"Biografisk kontekst:\n{bio_context}\n\n"
+        system_prompt += f"\nBiografisk kontekst:\n{bio_context}\n"
     
     if temporal_context:
-        system_prompt += f"Relevant tidsperiode:\n{temporal_context}\n\n"
+        system_prompt += f"\nRelevant tidsperiode:\n{temporal_context}\n"
     elif FISKER_TIMELINE:
-        # Fallback: inkluder hele timeline hvis ingen spesifikk periode ble funnet
         system_prompt += f"Karriere-timeline:\n{FISKER_TIMELINE[:500]}...\n\n"
-    
-    system_prompt += (
-        "Svar konkret basert på arkivmaterialet nedenfor. "
-        "Hvis materialet ikke dækker spørgsmålet direkte, si kort at det ikke omtales i arkivet, "
-        "men du kan evt. gi et kort perspektiv basert på din generelle praksis."
-    )
     
     full_prompt = (
         f"System: {system_prompt}\n\n"
-        f"Arkivmateriale:\n{context}\n\n"
-        f"Bruger: {user_prompt}\n\n"
+        f"### KILDEMATERIALE START ###\n{context}\n### KILDEMATERIALE SLUT ###\n\n"
+        f"Spørgsmål: {user_prompt}\n\n"
         f"Kay Fisker:"
     )
     
-    # 5. Generer respons
+    # 5. Generate (Low Temp)
     result = pipe(
         full_prompt, 
         max_new_tokens=160, 
-        temperature=0.25,  # Litt høyere for variasjon
+        temperature=0.1, # Veldig streng
         top_p=0.85,
         repetition_penalty=1.2,
-        do_sample=True  # Aktivert for litt mer naturlighet
+        do_sample=True
     )
     
     generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
+    generated_text = re.sub(r"^(System:|Spørgsmål:|###).*", "", generated_text, flags=re.MULTILINE).strip()
     
-    # Fjern eventuelle residual prompts
-    generated_text = re.sub(r"^(System:|Bruger:|Arkivmateriale:).*", "", generated_text, flags=re.MULTILINE).strip()
-    
-    # 6. Analyser (Både Genealogisk og Visuell)
+    # 6. Analyze
     genealogical_analysis = analyze_source_relations(strata, generated_text, user_prompt)
-    visuals = extract_visuals(generated_text) # Nytt!
+    visuals = extract_visuals(generated_text) # Visuell
 
-    # Beregn diskursiv tilstand
     state = "VISUEL_AKKUMULERING" if visuals else ("OVERMETNING" if len(strata) > 4 else "FRIKSJON")
     intensity = min(len(strata) / 6, 1.0)
     
     return {
         "text": generated_text,
         "strata": strata,
-        "visuals": visuals,
-        "state": state,
-        "intensity": intensity,
-        "genealogy": genealogical_analysis
-    }
-
-@app.get("/tts")
-async def get_tts(text: str):
-    if tts is None: 
-        return JSONResponse({"error": "TTS utilgjengelig"}, status_code=500)
-    
-    output = tts(text)
-    audio_data = output.get("audio")
-    sr = output.get("sampling_rate", 22050)
-    audio_path = "static/tts_output.wav"
-    sf.write(audio_path, audio_data, sr)
-    return FileResponse(audio_path, media_type="audio/wav")
-
-@app.get("/", response_class=HTMLResponse)
-async def root_view():
-    try:
+        "visuals": visus
         with open("static/index.html", "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     except Exception:
