@@ -25,13 +25,16 @@ except ImportError:
 
 # --- MILJØKONFIGURASJON ---
 os.environ["HF_HOME"] = "/app/cache"
+os.environ["HF_HUB_CACHE"] = "/app/cache"
+os.environ["TRANSFORMERS_CACHE"] = "/app/cache"
+
 HF_TOKEN = os.environ.get("HF_TOKEN")
 if HF_TOKEN:
     try:
         login(token=HF_TOKEN)
         print(f"✅ Logget inn på Hugging Face som: {whoami().get('name')}")
     except Exception as e:
-        print(f"⚠️ Login feil: {e}")
+        print(f"⚠️ Hugging Face Login feil: {e}")
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-corpus-1024")
@@ -77,6 +80,7 @@ def load_model_logic():
     LORA = "anvold/fisker-lora-clean"
     print("🧩 Laster base-modell + LoRA-adapter …")
     
+    # Rens adapter_config.json for HF Space kompatibilitet
     try:
         adapter_path = hf_hub_download(LORA, "adapter_config.json")
         with open(adapter_path, "r", encoding="utf-8") as f:
@@ -142,6 +146,7 @@ async def startup_event():
 
 # --- HJELPEFUNKSJONER ---
 def normalize_orthography(txt: str) -> str:
+    """Normaliserer OCR-tekst og fjerner bindestreker"""
     if not txt: return txt
     txt = re.sub(r"(\w+)-\n(\w+)", r"\1\2", txt)
     txt = re.sub(r"[ \t]*\n[ \t]*", " ", txt)
@@ -149,6 +154,7 @@ def normalize_orthography(txt: str) -> str:
     return txt
 
 def enhance_query(user_prompt: str) -> str:
+    """Utvider query basert på intensjonsdeteksjon og nøkkelverk"""
     prompt_lower = user_prompt.lower()
     
     # Nøkkelverk-mapping for bedre treffsikkerhet
@@ -156,49 +162,80 @@ def enhance_query(user_prompt: str) -> str:
         "vestersøhus": "Vestersøhus Kay Fisker Vester Søgade København 1935",
         "dronningegården": "Dronningegården Kay Fisker Dronningens Tværgade",
         "gullfoss": "Gullfosshus Kay Fisker Artillerivej",
+        "gullfosshus": "Gullfosshus Kay Fisker Artillerivej",
         "aarhus universitet": "Aarhus Universitet bygninger Kay Fisker C.F. Møller",
         "statsprøveanstalten": "Statsprøveanstalten Kay Fisker Amager Boulevard"
     }
 
+    # Sjekk om spesifikt verk nevnes
     for work, expansion in works_map.items():
         if work in prompt_lower:
             return f"{expansion} {user_prompt}"
 
+    # Detekter spørsmålstype
     is_biographical = any(w in prompt_lower for w in ["hvem", "hvad", "når", "hvor", "liv", "karriere"])
     is_theoretical = any(w in prompt_lower for w in ["hvorfor", "hvordan", "prinsipper", "teori", "tanker"])
     
-    if is_biographical: return f"Kay Fisker biografi liv karriere {user_prompt}"
-    elif is_theoretical: return f"arkitektonisk teori princip filosofi {user_prompt}"
+    # Strategisk expansion
+    if is_biographical:
+        return f"Kay Fisker biografi liv karriere {user_prompt}"
+    elif is_theoretical:
+        return f"arkitektonisk teori princip filosofi {user_prompt}"
     
     return f"arkitektur Kay Fisker {user_prompt}"
 
 def extract_temporal_context(user_prompt: str, timeline: str) -> str:
-    if not timeline: return ""
+    """Henter relevante timeline-segmenter basert på query"""
+    if not timeline:
+        return ""
+    
+    # Parse timeline
     periods = []
     for line in timeline.split("\n"):
         if match := re.match(r"(\d{4})[-–]?(\d{4})?: (.+)", line):
             start, end, event = match.groups()
-            periods.append({"start": int(start), "end": int(end) if end else int(start), "event": event.strip()})
+            periods.append({
+                "start": int(start),
+                "end": int(end) if end else int(start),
+                "event": event.strip()
+            })
     
+    # Finn relevante perioder (keyword matching)
     keywords = set(user_prompt.lower().split())
-    relevant = [p for p in periods if keywords & set(p["event"].lower().split())]
-    return "\n".join([f"{p['start']}: {p['event']}" for p in relevant[:3]]) if relevant else ""
+    relevant = []
+    
+    for p in periods:
+        event_words = set(p["event"].lower().split())
+        if keywords & event_words:  # Set intersection
+            relevant.append(p)
+    
+    if relevant:
+        return "\n".join([f"{p['start']}: {p['event']}" for p in relevant[:3]])
+    
+    return ""
 
 def diversify_sources(matches: list, max_per_year: int = 2, max_per_type: int = 3) -> list:
+    """Sørger for temporal og type-basert spredning av kilder"""
     year_count = defaultdict(int)
     type_count = defaultdict(int)
     diversified = []
+    
     for m in matches:
         year = m["metadata"].get("year", "unknown")
         doc_type = m["metadata"].get("__ns", "unknown")
+        
         if year_count[year] < max_per_year and type_count[doc_type] < max_per_type:
             diversified.append(m)
             year_count[year] += 1
             type_count[doc_type] += 1
-        if len(diversified) >= 6: break
+        
+        if len(diversified) >= 6:
+            break
+    
     return diversified
 
 def extract_visuals(text: str) -> list:
+    """Finner visuelle referanser i generert tekst"""
     found = []
     text_lower = text.lower()
     for key, data in VISUALS_DB.items():
@@ -208,18 +245,30 @@ def extract_visuals(text: str) -> list:
 
 # --- GENEALOGISK ANALYSE ---
 def find_attributable_segments(source_text: str, response_text: str) -> list:
-    if not embedder: return []
+    """
+    Finner segmenter i kildetekst som matcher med responsen.
+    Bruker sliding window + similarity scoring.
+    """
+    if not embedder:
+        return []
+
     source_words = source_text.split()
-    if len(source_words) < 8: return []
-    
+    if len(source_words) < 8:
+        return []
+
     segments = []
-    window_size, step = 12, 6
+    window_size = 12
+    step = 6
+
     for i in range(0, len(source_words) - window_size + 1, step):
         segments.append({
             "text": " ".join(source_words[i:i+window_size]),
-            "start_idx": i, "end_idx": i + window_size
+            "start_idx": i,
+            "end_idx": i + window_size
         })
-    if not segments: return []
+
+    if not segments:
+        return []
 
     response_emb = embedder.encode(response_text, convert_to_tensor=True)
     segment_embs = embedder.encode([s["text"] for s in segments], convert_to_tensor=True)
@@ -228,23 +277,38 @@ def find_attributable_segments(source_text: str, response_text: str) -> list:
     attributed = []
     for idx, sim in enumerate(similarities):
         if sim > 0.45:
-            attributed.append({"text": segments[idx]["text"], "similarity": float(sim)})
+            attributed.append({
+                "text": segments[idx]["text"],
+                "similarity": float(sim)
+            })
     
     attributed.sort(key=lambda x: x["similarity"], reverse=True)
     return attributed[:3]
 
 def analyze_source_relations(strata: list, response_text: str, query: str) -> dict:
-    if not embedder: return {}
-    analysis = {"source_attributions": [], "source_comparisons": [], "query_source_relations": [], "response_grounding": []}
+    """Avansert genealogisk analyse av forholdet mellom kilder og svar"""
+    if not embedder:
+        return {}
 
+    analysis = {
+        "source_attributions": [],
+        "source_comparisons": [],
+        "query_source_relations": [],
+        "response_grounding": []
+    }
+
+    # 1. Attributions
     for s in strata:
         attributed = find_attributable_segments(s["text"], response_text)
         if attributed:
             analysis["source_attributions"].append({
-                "source_id": s.get("id", "unknown"), "source_ref": s["ref"],
-                "segments": attributed, "attribution_strength": sum(seg["similarity"] for seg in attributed) / len(attributed)
+                "source_id": s.get("id", "unknown"),
+                "source_ref": s["ref"],
+                "segments": attributed,
+                "attribution_strength": sum(seg["similarity"] for seg in attributed) / len(attributed)
             })
 
+    # 2. Source Comparisons
     if len(strata) >= 2:
         source_texts = [s["text"] for s in strata]
         source_embs = embedder.encode(source_texts, convert_to_tensor=True)
@@ -253,47 +317,77 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
                 sim = util.cos_sim(source_embs[i], source_embs[j])[0][0].item()
                 if sim > 0.4:
                     analysis["source_comparisons"].append({
-                        "source_a": strata[i]["ref"], "source_b": strata[j]["ref"],
-                        "similarity": float(sim), "relation_type": "KONVERGENT" if sim > 0.7 else "RESONANT"
+                        "source_a": strata[i]["ref"],
+                        "source_b": strata[j]["ref"],
+                        "similarity": float(sim),
+                        "relation_type": "KONVERGENT" if sim > 0.7 else "RESONANT"
                     })
 
+    # 3. Query-Source Relations
     query_emb = embedder.encode(query, convert_to_tensor=True)
     for s in strata:
         rel = util.cos_sim(query_emb, embedder.encode(s["text"], convert_to_tensor=True))[0][0].item()
         analysis["query_source_relations"].append({
-            "source_ref": s["ref"], "query_relevance": float(rel),
+            "source_ref": s["ref"],
+            "query_relevance": float(rel),
             "relevance_category": "HØY" if rel > 0.6 else "MEDIUM" if rel > 0.4 else "LAV"
         })
 
+    # 4. Response Grounding
     resp_emb = embedder.encode(response_text, convert_to_tensor=True)
     comb_emb = embedder.encode(" ".join([s["text"] for s in strata]), convert_to_tensor=True)
     g_score = util.cos_sim(resp_emb, comb_emb)[0][0].item()
+    
     analysis["response_grounding"] = {
         "score": float(g_score),
         "assessment": "SOLID" if g_score > 0.7 else "MODERAT" if g_score > 0.5 else "SVAK"
     }
+
     return analysis
 
-# --- RAG-LOGIKK (MIX) ---
+# --- RAG-LOGIKK (MIX STRATEGI) ---
 def _fetch_ns(ns: str, qvec, top_k: int):
+    """Henter matches fra en spesifikk namespace"""
     try:
-        res = pinecone_index.query(vector=qvec, top_k=top_k, include_metadata=True, namespace=ns)
+        res = pinecone_index.query(
+            vector=qvec,
+            top_k=top_k,
+            include_metadata=True,
+            namespace=ns
+        )
         matches = res.get("matches", []) or []
-        for m in matches: m["metadata"]["__ns"] = ns
+        for m in matches:
+            m["metadata"]["__ns"] = ns
         return matches
-    except Exception: return []
+    except Exception as e:
+        print(f"⚠️ Feil i namespace '{ns}': {e}")
+        return []
 
 def pinecone_search_logic(user_prompt: str, total_results: int = 6):
-    if not (pinecone_index and embedder): return []
+    """
+    Forbedret RAG-søk med Mix-strategi:
+    - Query enhancement
+    - Strategisk namespace-fordeling
+    - Diversifisering
+    - Reranking
+    """
+    if not (pinecone_index and embedder):
+        return []
+    
     print(f"\n🔍 Analyserer: '{user_prompt}'")
     enhanced = enhance_query(user_prompt)
+    print(f"   ↳ Utvida til: '{enhanced}'")
     qvec = embedder.encode(enhanced).tolist()
     
+    # Strategisk namespace-fordeling
     ns_quotas = {"primary": 6, "secondary": 4, "quotes": 3}
     pool = defaultdict(list)
+    
     for ns, quota in ns_quotas.items():
         pool[ns] = _fetch_ns(ns, qvec, top_k=quota)
+        print(f"   ↳ {ns}: {len(pool[ns])} matches")
 
+    # Clean og filter
     cleaned_pool = defaultdict(list)
     for ns, matches in pool.items():
         for m in matches:
@@ -303,61 +397,87 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
                 md["text"] = txt
                 cleaned_pool[ns].append(m)
 
+    # Reranking per namespace
     if reranker:
         print("   🔄 Reranker...")
         for ns in cleaned_pool:
-            if not cleaned_pool[ns]: continue
+            if not cleaned_pool[ns]:
+                continue
             pairs = [(user_prompt, m["metadata"]["text"]) for m in cleaned_pool[ns]]
             scores = reranker.predict(pairs)
             cleaned_pool[ns] = [x for _, x in sorted(zip(scores, cleaned_pool[ns]), key=lambda z: z[0], reverse=True)]
 
+    # Mix-strategi: sikre diversitet
     final_selection = []
-    if cleaned_pool["secondary"]: final_selection.append(cleaned_pool["secondary"].pop(0))
-    if cleaned_pool["quotes"]: final_selection.append(cleaned_pool["quotes"].pop(0))
     
+    # Ta topp fra secondary og quotes først
+    if cleaned_pool["secondary"]:
+        final_selection.append(cleaned_pool["secondary"].pop(0))
+    if cleaned_pool["quotes"]:
+        final_selection.append(cleaned_pool["quotes"].pop(0))
+    
+    # Samle resten
     remaining = []
     remaining.extend(cleaned_pool["primary"])
     remaining.extend(cleaned_pool["secondary"])
     remaining.extend(cleaned_pool["quotes"])
     
+    # Final rerank av remaining
     if reranker and remaining:
-         pairs = [(user_prompt, m["metadata"]["text"]) for m in remaining]
-         scores = reranker.predict(pairs)
-         remaining = [x for _, x in sorted(zip(scores, remaining), key=lambda z: z[0], reverse=True)]
-         
+        pairs = [(user_prompt, m["metadata"]["text"]) for m in remaining]
+        scores = reranker.predict(pairs)
+        remaining = [x for _, x in sorted(zip(scores, remaining), key=lambda z: z[0], reverse=True)]
+    
+    # Fyll opp til total_results
     while len(final_selection) < total_results and remaining:
         candidate = remaining.pop(0)
-        if candidate not in final_selection: final_selection.append(candidate)
-            
+        if candidate not in final_selection:
+            final_selection.append(candidate)
+    
     print(f"   ✅ Returnerer {len(final_selection)} diverse kilder (Mix)")
+    
+    # Debug output
+    for i, m in enumerate(final_selection):
+        md = m["metadata"]
+        print(f"      [{i+1}] {md.get('__ns', '?').upper()} | {md.get('year', '?')} | {md.get('text', '')[:60]}...")
+    
     return final_selection
 
+# --- API ENDEPUNKTER ---
 @app.post("/chat")
 async def api_chat(req: Request):
     data = await req.json()
     user_prompt = data.get("message", "")
     
-    if len(user_prompt.strip()) < 3: return JSONResponse({"error": "Spørsmål for kort"}, 400)
+    if len(user_prompt.strip()) < 3:
+        return JSONResponse({"error": "Spørsmål for kort"}, 400)
     
+    # RAG med Mix-strategi
     matches = pinecone_search_logic(user_prompt, total_results=6)
     context = "\n---\n".join([m["metadata"]["text"] for m in matches])
     
+    # Bio-kontekst
     bio_context = ""
     for m in matches:
         if m["metadata"].get("__ns") == "secondary":
             bio_context = m["metadata"]["text"]
             break
     
+    # Temporal kontekst
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
+    
+    # Bygg strata
     strata = []
     for i, m in enumerate(matches):
         strata.append({
-            "id": f"source_{i}", "text": m["metadata"].get("text", ""),
+            "id": f"source_{i}",
+            "text": m["metadata"].get("text", ""),
             "ref": f"{m['metadata'].get('author', 'Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
-            "year": m["metadata"].get("year"), "type": m["metadata"].get("__ns", "primary").upper()
+            "year": m["metadata"].get("year"),
+            "type": m["metadata"].get("__ns", "primary").upper()
         })
 
-    # HYBRID EPISTEMISK PROMPT (DEN VIKTIGSTE ENDRINGEN)
+    # HYBRID EPISTEMISK PROMPT
     system_prompt = (
         "Du er arkitekten Kay Fisker (1893–1965). "
         "Når du svarer, skal du skille tydeligt mellem tre epistemiske niveauer: "
@@ -369,8 +489,10 @@ async def api_chat(req: Request):
         "Hold svarene korte og i et nøgternt fagsprog."
     )
     
-    if bio_context: system_prompt += f"\nBiografisk kontekst:\n{bio_context}\n"
-    if temporal_context: system_prompt += f"\nRelevant tidsperiode:\n{temporal_context}\n"
+    if bio_context:
+        system_prompt += f"\nBiografisk kontekst:\n{bio_context}\n"
+    if temporal_context:
+        system_prompt += f"\nRelevant tidsperiode:\n{temporal_context}\n"
     
     full_prompt = (
         f"System: {system_prompt}\n\n"
@@ -380,30 +502,36 @@ async def api_chat(req: Request):
     )
     
     result = pipe(
-        full_prompt, 
-        max_new_tokens=180, # Litt mer rom for syntese
-        temperature=0.2,    # Litt mer frihet enn 0.1, men kontrollert
-        top_p=0.9, 
-        repetition_penalty=1.15, 
+        full_prompt,
+        max_new_tokens=180,
+        temperature=0.2,
+        top_p=0.9,
+        repetition_penalty=1.15,
         do_sample=True
     )
     
     generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
     generated_text = re.sub(r"^(System:|Spørgsmål:|###).*", "", generated_text, flags=re.MULTILINE).strip()
     
+    # Analyser
     genealogy = analyze_source_relations(strata, generated_text, user_prompt)
     visuals = extract_visuals(generated_text)
-
+    
     state = "VISUEL_AKKUMULERING" if visuals else ("OVERMETNING" if len(strata) > 4 else "FRIKSJON")
     
     return {
-        "text": generated_text, "strata": strata, "visuals": visuals,
-        "state": state, "intensity": min(len(strata)/6, 1.0), "genealogy": genealogy
+        "text": generated_text,
+        "strata": strata,
+        "visuals": visuals,
+        "state": state,
+        "intensity": min(len(strata)/6, 1.0),
+        "genealogy": genealogy
     }
 
 @app.get("/tts")
 async def get_tts(text: str):
-    if tts is None: return JSONResponse({"error": "TTS utilgjengelig"}, 500)
+    if tts is None:
+        return JSONResponse({"error": "TTS utilgjengelig"}, 500)
     out = tts(text)
     sf.write("static/tts_output.wav", out["audio"], out["sampling_rate"])
     return FileResponse("static/tts_output.wav", media_type="audio/wav")
@@ -411,8 +539,10 @@ async def get_tts(text: str):
 @app.get("/", response_class=HTMLResponse)
 async def root_view():
     try:
-        with open("static/index.html", "r") as f: return HTMLResponse(content=f.read())
-    except: return HTMLResponse(content="<h1>static/index.html ikke funnet</h1>")
+        with open("static/index.html", "r") as f:
+            return HTMLResponse(content=f.read())
+    except:
+        return HTMLResponse(content="<h1>static/index.html ikke funnet</h1>")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
