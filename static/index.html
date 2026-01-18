@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Diskursmaskine v.8.12 - Temporal Glass Membrane</title>
+    <title>Fisker / Diskursmaskine v.8.13 - Analytical Workbench</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -25,7 +25,7 @@
             const [intensity, setIntensity] = useState(0.0);
             const [isSynthesizing, setIsSynthesizing] = useState(false);
             const [syntheticResponse, setSyntheticResponse] = useState("");
-            const [selectedSource, setSelectedSource] = useState(null);
+            const [selectedSources, setSelectedSources] = useState([]); // Liste over valgte kilder for sammenligning
             const [hoveredSource, setHoveredSource] = useState(null);
             const [typingTimeout, setTypingTimeout] = useState(null);
             
@@ -60,7 +60,6 @@
                 return () => window.removeEventListener('resize', onResize);
             }, []);
 
-            // Temporal posisjonering: Eldre kilder synker dypere (Y-aksen)
             const getTemporalPosition = (year, existing) => {
                 const yearNum = parseInt(year) || 1950;
                 const age = 2024 - yearNum;
@@ -85,9 +84,8 @@
 
             useEffect(() => {
                 lucide.createIcons();
-            }, [syntheticResponse, selectedSource, activeStrata]);
+            }, [syntheticResponse, selectedSources, activeStrata, isSynthesizing]);
 
-            // Debounced og intensjonsstyrt triggering
             const handleTextChange = (text) => {
                 setDocumentText(text);
                 if (typingTimeout) clearTimeout(typingTimeout);
@@ -100,14 +98,16 @@
                     executeGenealogicalRAG(text);
                 } else {
                     const timeout = setTimeout(() => {
-                        if (text.length > 80) executeGenealogicalRAG(text);
-                    }, 1500);
+                        if (text.length > 100) executeGenealogicalRAG(text);
+                    }, 2500);
                     setTypingTimeout(timeout);
                 }
             };
 
-            const executeGenealogicalRAG = async (text) => {
-                if (isSynthesizing) return;
+            const executeGenealogicalRAG = async (textOverride) => {
+                const textToSend = textOverride || documentText;
+                if (isSynthesizing || !textToSend.trim()) return;
+                
                 setIsSynthesizing(true);
                 addLog(`Interpellerer arkivets strata...`);
 
@@ -115,7 +115,7 @@
                     const response = await fetch('/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: text })
+                        body: JSON.stringify({ message: textToSend })
                     });
                     const data = await response.json();
                     
@@ -137,10 +137,35 @@
                     setIntensity(data.intensity || 0.4);
                     addLog(`Analyse fuldført.`);
                 } catch (error) {
-                    addLog(`Systemfejl i dekonstruktion.`);
+                    addLog(`Systemfejl.`);
                 } finally {
                     setIsSynthesizing(false);
                 }
+            };
+
+            const toggleSource = (source) => {
+                setSelectedSources(prev => {
+                    const exists = prev.find(s => s.id === source.id);
+                    if (exists) return prev.filter(s => s.id !== source.id);
+                    return [...prev, source];
+                });
+            };
+
+            // Funksjon for å finne setninger i kilden som ligner på svaret (simulert aktivering)
+            const getHighlightedText = (fullText, response) => {
+                if (!response) return <span>{fullText}</span>;
+                const sentences = fullText.split(/[.!?]+/);
+                const responseWords = response.toLowerCase().split(' ');
+                
+                return sentences.map((s, i) => {
+                    const matchCount = s.toLowerCase().split(' ').filter(w => responseWords.includes(w) && w.length > 4).length;
+                    const isActivated = matchCount > 1;
+                    return (
+                        <span key={i} className={isActivated ? "bg-red-50 text-black font-medium border-b border-red-200" : "opacity-60"}>
+                            {s}{i < sentences.length - 1 ? "." : ""}
+                        </span>
+                    );
+                });
             };
 
             return (
@@ -153,26 +178,28 @@
                         .animate-glow { animation: glow-pulse 12s ease-in-out infinite; }
                         
                         .glass-membrane { 
-                            background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05));
-                            backdrop-filter: blur(50px) saturate(180%);
-                            -webkit-backdrop-filter: blur(50px) saturate(180%);
-                            border: 1px solid rgba(255, 255, 255, 0.2);
-                            border-top: 1px solid rgba(255, 255, 255, 0.4);
-                            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.1), inset 0 0 15px rgba(255, 255, 255, 0.05);
+                            background: linear-gradient(135deg, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0.08));
+                            backdrop-filter: blur(50px) saturate(190%);
+                            -webkit-backdrop-filter: blur(50px) saturate(190%);
+                            border: 1px solid rgba(255, 255, 255, 0.25);
+                            border-top: 1px solid rgba(255, 255, 255, 0.5);
+                            box-shadow: 0 30px 70px rgba(0, 0, 0, 0.12), inset 0 0 20px rgba(255, 255, 255, 0.05);
                         }
                         
                         .source-node { transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1); border-radius: 2px 12px 12px 2px; }
-                        .source-node:hover { scale: 1.05; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.15); }
+                        .source-node.active { border: 2px solid black; box-shadow: 0 0 0 4px rgba(0,0,0,0.05); }
+                        .source-node:hover { scale: 1.05; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; }
+                        
                         @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
                         .scan-line { animation: scan-line 15s linear infinite; }
                     `}</style>
 
                     {/* STATUS BAR */}
-                    <header className="h-9 border-b border-white/20 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/10 backdrop-blur-md">
+                    <header className="h-9 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/10 backdrop-blur-md">
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
                                 <div className="w-3 h-3 bg-[#e32219] flex items-center justify-center text-white font-black italic text-[6px]">F</div>
-                                <h1 className="text-[6px] font-extrabold uppercase tracking-[0.4em] text-black/60">Build 8.12</h1>
+                                <h1 className="text-[6px] font-extrabold uppercase tracking-[0.4em] text-black/60">Analytical Build 8.13</h1>
                             </div>
                             <span className={`text-[6px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`}>
                                 {discursiveState}
@@ -182,12 +209,12 @@
                             <div className="w-16 h-[1px] bg-black/5 relative overflow-hidden">
                                 <div className="h-full bg-red-500 transition-all duration-3000" style={{ width: `${intensity * 100}%` }}></div>
                             </div>
-                            <span className="text-[6px] font-mono text-gray-400 uppercase tracking-widest italic">KADK // DISKURS_APPARAT</span>
+                            <span className="text-[6px] font-mono text-gray-400 uppercase tracking-widest italic">Genealogisk Arbejdsbord</span>
                         </div>
                     </header>
 
                     {/* ARCHIVE CANVAS */}
-                    <main className={`flex-grow relative z-10 transition-colors duration-1000 ${selectedSource ? 'bg-black/5' : 'bg-transparent'}`}>
+                    <main className="flex-grow relative z-10">
                         {isSynthesizing && <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-5"><div className="w-full h-1 bg-red-500 scan-line blur-[4px]"></div></div>}
 
                         {/* HALO GLOWS */}
@@ -212,12 +239,28 @@
 
                         {/* CONNECTION PATHS */}
                         <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSource?.id === s.id) && (
+                            {/* Stier mellom valgte kilder */}
+                            {selectedSources.length > 1 && selectedSources.map((s, i) => {
+                                const next = selectedSources[i + 1];
+                                if (!next) return null;
+                                return (
+                                    <line 
+                                        key={`link-${i}`}
+                                        x1={`${s.pos.x}%`} y1={`${s.pos.y}%`}
+                                        x2={`${next.pos.x}%`} y2={`${next.pos.y}%`}
+                                        stroke="rgba(0,0,0,0.1)"
+                                        strokeWidth="0.5"
+                                        strokeDasharray="2,4"
+                                    />
+                                );
+                            })}
+                            {/* Stier fra input til valgte/hovered kilder */}
+                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSources.find(ss => ss.id === s.id)) && (
                                 <path 
                                     key={`path-${i}`}
-                                    d={`M ${viewport.w / 2} ${viewport.h - 120} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`}
+                                    d={`M ${viewport.w / 2} ${viewport.h - 140} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`}
                                     stroke={s.color} 
-                                    strokeWidth="1"
+                                    strokeWidth="1.2"
                                     fill="none"
                                     strokeDasharray="3,6"
                                     className="animate-in fade-in duration-1000"
@@ -228,45 +271,82 @@
                         {/* SOURCE NODES */}
                         <div className="absolute inset-0 z-20 pointer-events-none">
                             {activeStrata.map((s, i) => {
-                                const isFocused = selectedSource?.id === s.id;
-                                const isDimmed = selectedSource && !isFocused;
+                                const isSelected = selectedSources.find(ss => ss.id === s.id);
                                 return (
                                     <div 
                                         key={s.id} 
-                                        onClick={() => setSelectedSource(isFocused ? null : s)}
+                                        onClick={() => toggleSource(s)}
                                         onMouseEnter={() => setHoveredSource(s.id)}
                                         onMouseLeave={() => setHoveredSource(null)}
-                                        className={`source-node absolute p-5 border-l-[2px] max-w-[280px] animate-drift pointer-events-auto cursor-pointer bg-white/30 backdrop-blur-xl border border-white/20 ${isDimmed ? 'opacity-5 blur-md' : 'opacity-100'} ${hoveredSource === s.id ? 'border-black bg-white/80' : 'border-black/5 shadow-sm'}`} 
+                                        className={`source-node absolute p-4 border-l-[2px] max-w-[240px] animate-drift pointer-events-auto cursor-pointer bg-white/30 backdrop-blur-xl border border-white/20 shadow-sm ${isSelected ? 'active bg-white/90 scale-105' : 'border-black/5 opacity-80'}`} 
                                         style={{ 
                                             left: `${s.pos.x}%`, 
                                             top: `${s.pos.y}%`, 
                                             transform: 'translate(-50%, -50%)',
-                                            borderColor: (hoveredSource === s.id || isFocused) ? s.color : 'rgba(0,0,0,0.05)',
-                                            animationDelay: `${i * 7}s`
+                                            borderColor: (hoveredSource === s.id || isSelected) ? s.color : 'rgba(0,0,0,0.05)',
+                                            animationDelay: `${i * 5}s`
                                         }}
                                     >
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="text-[6px] font-mono text-gray-400 uppercase font-black tracking-widest">{s.type}</span>
-                                            <span className="text-[6px] font-mono text-gray-400 font-bold tracking-tighter">{s.year || 'ARKIV'}</span>
-                                        </div>
-                                        <p className={`serif italic transition-all duration-700 leading-snug ${hoveredSource === s.id || isFocused ? 'text-[13px] text-black' : 'text-[10px] text-gray-400'}`}>
-                                            "{hoveredSource === s.id || isFocused ? s.text : s.text.substring(0, 80) + '...'}"
-                                        </p>
-                                        {(hoveredSource === s.id || isFocused) && (
-                                            <div className="mt-3 pt-2 border-t border-black/5 flex justify-between items-center animate-in fade-in">
-                                                <span className="text-[5px] font-bold uppercase tracking-widest text-red-500">RELATION AKTIVERET</span>
-                                                <span className="text-[6px] font-mono text-gray-400 italic truncate ml-4">{s.ref}</span>
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="text-[5px] font-mono text-gray-400 uppercase font-black tracking-widest">{s.type}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[5px] font-mono text-gray-400 font-bold">{s.year}</span>
+                                                {isSelected && <i data-lucide="check-circle" className="w-2 h-2 text-green-500"></i>}
                                             </div>
-                                        )}
+                                        </div>
+                                        <p className={`serif italic transition-all duration-700 leading-snug ${isSelected || hoveredSource === s.id ? 'text-[11px] text-black' : 'text-[9px] text-gray-400'}`}>
+                                            "{s.text.substring(0, 100)}..."
+                                        </p>
                                     </div>
                                 );
                             })}
                         </div>
                     </main>
 
+                    {/* SIDE PANEL: SAMMENLIGNINGS-MODUL (Kun når kilder er valgt) */}
+                    {selectedSources.length > 0 && (
+                        <div className="fixed right-0 top-0 h-full w-[450px] bg-white/90 backdrop-blur-3xl border-l border-gray-100 z-[60] shadow-2xl flex flex-col animate-in slide-in-from-right duration-500">
+                            <header className="p-6 border-b border-gray-50 flex justify-between items-center bg-white/50">
+                                <div>
+                                    <span className="text-[8px] font-black uppercase text-red-500 tracking-[0.2em]">Genealogisk Sammenligning</span>
+                                    <h2 className="text-[10px] font-bold uppercase tracking-widest mt-1 italic text-gray-400">{selectedSources.length} Strata valgt</h2>
+                                </div>
+                                <button onClick={() => setSelectedSources([])} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-all">
+                                    <i data-lucide="x" className="w-4 h-4"></i>
+                                </button>
+                            </header>
+                            
+                            <div className="flex-grow overflow-y-auto p-8 space-y-12 scrollbar-hide">
+                                {selectedSources.map((s, i) => (
+                                    <div key={s.id} className="space-y-4 animate-in fade-in slide-in-from-bottom-2" style={{ animationDelay: `${i * 100}ms` }}>
+                                        <div className="flex items-center justify-between border-b border-gray-50 pb-2">
+                                            <span className="text-[7px] font-mono font-black uppercase tracking-widest" style={{ color: s.color }}>{s.type} // {s.year}</span>
+                                            <span className="text-[6px] font-mono text-gray-300 italic">{s.ref}</span>
+                                        </div>
+                                        <p className="text-[13px] serif italic leading-relaxed text-gray-800">
+                                            {getHighlightedText(s.text, syntheticResponse)}
+                                        </p>
+                                        <div className="flex gap-4">
+                                            <div className="flex-1 p-3 bg-gray-50/50 rounded text-[8px] text-gray-500">
+                                                <span className="font-bold uppercase block mb-1">Status i analysen</span>
+                                                Fragmentet leverer grundlaget for diskursen om {documentText.substring(0, 20)}...
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <footer className="p-6 border-t border-gray-50 bg-white/50">
+                                <button className="w-full bg-black text-white text-[9px] font-bold uppercase py-4 tracking-[0.2em] hover:bg-red-600 transition-all flex items-center justify-center gap-3">
+                                    Eksportér Krydsfelt <i data-lucide="arrow-right" className="w-3 h-3"></i>
+                                </button>
+                            </footer>
+                        </div>
+                    )}
+
                     {/* FLOATING GLASS OPERATING MEMBRANE */}
                     <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-full max-w-lg z-50 px-4">
-                        <div className="glass-membrane rounded-[2rem] p-8 transition-all duration-700 hover:shadow-2xl group">
+                        <div className="glass-membrane rounded-[2rem] p-8 transition-all duration-700 hover:shadow-2xl group relative overflow-hidden">
                             
                             {/* Input Area */}
                             <div className="relative">
@@ -282,13 +362,27 @@
                                     })}
                                 </div>
 
-                                <textarea 
-                                    value={documentText} 
-                                    onChange={e => handleTextChange(e.target.value)} 
-                                    placeholder="Indskriv tese..." 
-                                    className={`w-full text-lg serif leading-relaxed text-black border-none focus:ring-0 p-0 placeholder-black/10 resize-none bg-transparent h-[50px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
-                                    spellCheck="false"
-                                />
+                                <div className="flex items-start gap-4">
+                                    <textarea 
+                                        value={documentText} 
+                                        onChange={e => handleTextChange(e.target.value)} 
+                                        placeholder="Indskriv tese eller påstand..." 
+                                        className={`flex-grow text-lg serif leading-relaxed text-black border-none focus:ring-0 p-0 placeholder-black/20 resize-none bg-transparent h-[50px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
+                                        spellCheck="false"
+                                    />
+                                    <button 
+                                        onClick={() => executeGenealogicalRAG()}
+                                        disabled={isSynthesizing || documentText.length < 5}
+                                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${isSynthesizing ? 'bg-gray-100 text-gray-300' : 'bg-black text-white hover:bg-red-600 hover:scale-110 shadow-lg'}`}
+                                        title="Aktiver analyse"
+                                    >
+                                        {isSynthesizing ? (
+                                            <i data-lucide="loader-2" className="w-4 h-4 animate-spin"></i>
+                                        ) : (
+                                            <i data-lucide="arrow-right" className="w-4 h-4"></i>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Response Area */}
@@ -303,10 +397,13 @@
                                         "{syntheticResponse}"
                                     </p>
                                     <div className="mt-6 flex justify-between items-center text-[6px] font-mono font-bold text-gray-400 uppercase tracking-widest">
-                                        <span className="flex items-center gap-2 italic">Build 8.12 // LoRA_STABLE</span>
-                                        <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]);}} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-black/5">
-                                            <i data-lucide="refresh-cw" className="w-2 h-2"></i> RENS
-                                        </button>
+                                        <span className="flex items-center gap-2 italic">Build 8.13 // LoRA_STABLE</span>
+                                        <div className="flex items-center gap-4">
+                                            {selectedSources.length > 0 && <span className="text-red-500 animate-pulse">Relateret til {selectedSources.length} kilder</span>}
+                                            <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]); setSelectedSources([]);}} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-black/5">
+                                                <i data-lucide="refresh-cw" className="w-2 h-2"></i> RENS
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -316,12 +413,12 @@
                     {/* FOOTER LOGS */}
                     <footer className="h-6 bg-transparent flex items-center justify-between px-8 text-[6px] font-bold uppercase tracking-[0.2em] text-gray-300 fixed bottom-0 w-full z-40">
                         <div className="flex gap-8 items-center">
-                            <span className="text-black/20 font-black">KADK</span>
+                            <span className="text-black/20 font-black tracking-widest">KADK // DISKURS_APPARAT</span>
                             {logs.slice(-1).map((log, i) => (
                                 <span key={i} className="text-black/40 animate-pulse font-mono tracking-tighter">[{log.time}] {log.msg}</span>
                             ))}
                         </div>
-                        <span className="opacity-10 font-mono tracking-tighter italic">EPISTEMIC_MEMBRANE_V8.12</span>
+                        <span className="opacity-10 font-mono tracking-tighter italic">EPISTEMIC_MEMBRANE_V8.13</span>
                     </footer>
                 </div>
             );
