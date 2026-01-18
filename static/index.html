@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Diskursmaskine v.8.7 - Dashboard</title>
+    <title>Fisker / Diskursmaskine v.8.9 - Glass Dashboard</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -11,7 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body class="bg-[#fafafa] selection:bg-red-100 overflow-hidden">
+<body class="bg-[#f0f0f0] selection:bg-red-200 overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -31,9 +31,9 @@
             const terminalRef = useRef(null);
 
             const rams = {
-                red: "rgba(227, 34, 25, 0.6)",
-                blue: "rgba(0, 107, 180, 0.6)",
-                orange: "rgba(255, 160, 0, 0.5)",
+                red: "rgba(227, 34, 25, 0.7)",
+                blue: "rgba(0, 107, 180, 0.7)",
+                orange: "rgba(255, 160, 0, 0.6)",
                 black: "#1a1a1a"
             };
 
@@ -45,12 +45,28 @@
 
             const addLog = (msg) => {
                 const message = typeof msg === 'string' ? msg : JSON.stringify(msg);
-                setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: message }].slice(-5));
+                setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: message }].slice(-3));
+            };
+
+            // Logikk for å unngå overlapping av kilder (Spatial distribution)
+            const getRandomNonOverlappingPos = (existing) => {
+                let attempts = 0;
+                while (attempts < 100) {
+                    const pos = { x: 8 + Math.random() * 75, y: 12 + Math.random() * 45 };
+                    const isOverlapping = existing.some(e => {
+                        const dx = Math.abs(e.pos.x - pos.x);
+                        const dy = Math.abs(e.pos.y - pos.y);
+                        return dx < 22 && dy < 18;
+                    });
+                    if (!isOverlapping) return pos;
+                    attempts++;
+                }
+                return { x: Math.random() * 80, y: Math.random() * 50 };
             };
 
             useEffect(() => {
                 lucide.createIcons();
-            }, [activeStrata, syntheticResponse, isSynthesizing, selectedSource, logs]);
+            }, [activeStrata, syntheticResponse, isSynthesizing, selectedSource]);
 
             useEffect(() => {
                 if (!documentText.trim()) return;
@@ -63,7 +79,7 @@
             const executeGenealogicalRAG = async (text) => {
                 if (isSynthesizing) return;
                 setIsSynthesizing(true);
-                addLog(`Søger i arkivets dybde...`);
+                addLog(`Aktiverer arkiv-strata...`);
 
                 try {
                     const response = await fetch('/chat', {
@@ -71,157 +87,158 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ message: text })
                     });
-
                     const data = await response.json();
                     
                     if (data.strata) {
-                        const newStrata = data.strata.map((s, i) => ({
-                            ...s,
-                            id: `s-${Date.now()}-${i}`,
-                            pos: { 
-                                x: 5 + (Math.random() * 90), 
-                                y: 10 + (Math.random() * 50) 
-                            },
-                            color: s.type === "PRIMARY" ? rams.blue : s.type === "QUOTES" ? rams.orange : rams.red
-                        }));
-                        setActiveStrata(newStrata);
+                        const positionedStrata = [];
+                        data.strata.forEach((s, i) => {
+                            positionedStrata.push({
+                                ...s,
+                                id: `s-${Date.now()}-${i}`,
+                                pos: getRandomNonOverlappingPos(positionedStrata),
+                                color: s.type === "PRIMARY" ? rams.blue : s.type === "QUOTES" ? rams.orange : rams.red
+                            });
+                        });
+                        setActiveStrata(positionedStrata);
                     }
 
                     setSyntheticResponse(data.text);
                     setDiscursiveState(data.state || "FRIKSJON");
                     setIntensity(data.intensity || 0.4);
-                    addLog(`Arkiv-respons genereret.`);
-
+                    addLog(`Respons etableret.`);
                 } catch (error) {
-                    addLog(`Systemfejl: ${error.message}`);
+                    addLog(`Forbindelsesfejl.`);
                 } finally {
                     setIsSynthesizing(false);
                 }
             };
 
             return (
-                <div className="h-screen w-screen flex flex-col relative bg-[#fdfdfd] font-sans">
+                <div className="h-screen w-screen flex flex-col relative bg-[#f2f2f2] font-sans overflow-hidden">
                     <style>{`
-                        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+                        body { font-family: 'Inter', sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
                         .serif { font-family: 'Libre Baskerville', serif; }
-                        textarea::placeholder { color: #d1d1d1; font-style: italic; }
-                        .diskurs-field { transition: all 6s cubic-bezier(0.23, 1, 0.32, 1); }
+                        textarea::placeholder { color: #ccc; }
+                        @keyframes glow-pulse { 0% { opacity: 0.15; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.15); } 100% { opacity: 0.15; transform: scale(1); } }
+                        .animate-glow { animation: glow-pulse 8s ease-in-out infinite; }
+                        .glass-effect { background: rgba(255, 255, 255, 0.65); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.4); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.08); }
+                        .source-node { transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); border-radius: 4px 16px 16px 4px; }
+                        .source-node:hover { scale: 1.08; z-index: 100; background: rgba(255, 255, 255, 0.9) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.1); }
                         @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
                         .scan-line { animation: scan-line 10s linear infinite; }
-                        .scrollbar-hide::-webkit-scrollbar { display: none; }
-                        @keyframes drift { 0% { transform: translate(0, 0); } 50% { transform: translate(40px, -30px); } 100% { transform: translate(0, 0); } }
-                        .animate-drift { animation: drift 50s ease-in-out infinite; }
-                        .source-node { transition: all 0.7s cubic-bezier(0.19, 1, 0.22, 1); }
-                        .source-node:hover { scale: 1.25; z-index: 50; }
                     `}</style>
 
-                    {/* TOP BAR: SYSTEM STATUS */}
-                    <header class="h-12 bg-white/60 backdrop-blur-md border-b border-gray-100 flex items-center justify-between px-8 z-50 fixed top-0 w-full">
-                        <div class="flex items-center gap-10">
+                    {/* STATUS BAR */}
+                    <header class="h-9 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/20 backdrop-blur-md">
+                        <div class="flex items-center gap-6">
                             <div class="flex items-center gap-2">
-                                <div class="w-4 h-4 bg-[#e32219] flex items-center justify-center text-white font-bold italic text-[8px]">F</div>
-                                <h1 class="text-[8px] font-extrabold uppercase tracking-[0.4em] text-black">Diskursmaskine 8.7</h1>
+                                <div class="w-3 h-3 bg-[#e32219] flex items-center justify-center text-white font-black italic text-[6px]">F</div>
+                                <h1 class="text-[6px] font-extrabold uppercase tracking-[0.4em] text-black">Apparat 8.9</h1>
                             </div>
-                            <div class="h-3 w-[1px] bg-gray-200"></div>
-                            <span class={`text-[7px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`}>
-                                Status: {isSynthesizing ? 'Dekonstruerer...' : discursiveState}
+                            <span class={`text-[6px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`}>
+                                {discursiveState}
                             </span>
                         </div>
-                        <div class="flex items-center gap-6">
-                            <div class="flex flex-col items-end">
-                                <span class="text-[6px] font-mono text-gray-400 uppercase font-bold tracking-widest">Genealogisk Akse Active</span>
+                        <div class="flex items-center gap-4">
+                            <div class="w-16 h-[1px] bg-gray-200 relative overflow-hidden">
+                                <div class="h-full bg-black transition-all duration-2000" style={{ width: `${intensity * 100}%` }}></div>
                             </div>
-                            <div class="w-20 h-[1.5px] bg-gray-100 relative overflow-hidden">
-                                <div class="h-full bg-red-500 transition-all duration-1000" style={{ width: `${intensity * 100}%` }}></div>
-                            </div>
+                            <span class="text-[6px] font-mono text-gray-400 uppercase tracking-widest italic">KADK RESEARCH UNIT</span>
                         </div>
                     </header>
 
-                    {/* MAIN FIELD: ARKIVETS STRATA */}
-                    <main class="flex-grow relative z-10 overflow-hidden">
+                    {/* ARCHIVE CANVAS */}
+                    <main class={`flex-grow relative z-10 transition-colors duration-1000 ${selectedSource ? 'bg-black/5' : 'bg-transparent'}`}>
                         
-                        {/* SVG Forbindelser fra dashboardet og opp til kildene */}
-                        <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-20">
-                            {activeStrata.map((s, i) => (
-                                <g key={`path-${i}`}>
-                                    <path 
-                                        d={`M ${window.innerWidth / 2} ${window.innerHeight} C ${window.innerWidth / 2} ${window.innerHeight / 1.5}, ${s.pos.x * window.innerWidth / 100} ${window.innerHeight / 1.5}, ${s.pos.x * window.innerWidth / 100} ${s.pos.y * window.innerHeight / 100}`}
-                                        stroke={hoveredSource === s.id || selectedSource?.id === s.id ? s.color : "#d1d1d1"} 
-                                        strokeWidth={hoveredSource === s.id ? "1.5" : "0.5"}
-                                        fill="none"
-                                        strokeDasharray={hoveredSource === s.id ? "0" : "3,6"}
-                                        class="transition-all duration-700"
-                                    />
-                                    <circle 
-                                        cx={`${s.pos.x}%`} cy={`${s.pos.y}%`} 
-                                        r={`${15 + (intensity * 20)}%`} 
-                                        fill={s.color} fillOpacity="0.03" 
-                                        class="diskurs-field"
-                                    />
-                                </g>
-                            ))}
-                        </svg>
+                        {isSynthesizing && <div class="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-10"><div class="w-full h-1 bg-red-500 scan-line blur-[2px]"></div></div>}
 
-                        {/* FLYTENDE KILDER (Store på hover) */}
-                        <div class="absolute inset-0 z-20 pointer-events-none">
+                        {/* HALO GLOWS */}
+                        <div class="absolute inset-0 z-0 pointer-events-none">
                             {activeStrata.map((s, i) => (
                                 <div 
-                                    key={s.id} 
-                                    onClick={() => setSelectedSource(s)}
-                                    onMouseEnter={() => setHoveredSource(s.id)}
-                                    onMouseLeave={() => setHoveredSource(null)}
-                                    class={`source-node absolute p-6 border-l-[3px] max-w-[320px] animate-drift pointer-events-auto cursor-pointer group bg-white/5 backdrop-blur-[1px] hover:bg-white hover:shadow-2xl ${hoveredSource === s.id ? 'border-black' : 'border-black/5'}`} 
+                                    key={`glow-${i}`}
+                                    class="absolute rounded-full animate-glow blur-[90px]"
                                     style={{ 
                                         left: `${s.pos.x}%`, 
                                         top: `${s.pos.y}%`, 
+                                        width: '45%', 
+                                        height: '45%', 
+                                        background: `radial-gradient(circle, ${s.color} 0%, transparent 75%)`,
                                         transform: 'translate(-50%, -50%)',
-                                        animationDelay: `${i * 4}s`,
-                                        borderColor: hoveredSource === s.id ? s.color : 'rgba(0,0,0,0.05)'
+                                        animationDelay: `${i * 1.5}s`
                                     }}
-                                >
-                                    <div class="flex justify-between items-center mb-4">
-                                        <div class="text-[7px] font-mono text-gray-400 uppercase font-black tracking-[0.2em]">{s.type}</div>
-                                        <div class="text-[7px] font-mono text-gray-300 italic">#{s.year || 'ARKIV'}</div>
-                                    </div>
-                                    <p class={`serif italic transition-all duration-500 leading-relaxed ${hoveredSource === s.id ? 'text-[15px] text-black' : 'text-[11px] text-gray-400'}`}>
-                                        "{hoveredSource === s.id ? s.text.substring(0, 300) : s.text.substring(0, 120)}..."
-                                    </p>
-                                    {hoveredSource === s.id && (
-                                        <div class="mt-6 pt-4 border-t border-gray-50 flex justify-between items-center animate-in fade-in duration-500">
-                                            <span class="text-[7px] font-bold text-red-500 uppercase tracking-widest">Klik for dypanalyse →</span>
-                                            <span class="text-[7px] font-mono text-gray-300 uppercase italic">Referens: {s.ref}</span>
-                                        </div>
-                                    )}
-                                </div>
+                                />
                             ))}
+                        </div>
+
+                        {/* CONNECTION PATHS */}
+                        <svg class="absolute inset-0 w-full h-full pointer-events-none z-10">
+                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSource?.id === s.id) && (
+                                <path 
+                                    key={`path-${i}`}
+                                    d={`M ${window.innerWidth / 2} ${window.innerHeight - 100} C ${window.innerWidth / 2} ${window.innerHeight / 2}, ${s.pos.x * window.innerWidth / 100} ${window.innerHeight / 2}, ${s.pos.x * window.innerWidth / 100} ${s.pos.y * window.innerHeight / 100}`}
+                                    stroke={s.color} 
+                                    strokeWidth="1.2"
+                                    fill="none"
+                                    strokeDasharray="4,4"
+                                    class="animate-in fade-in duration-700"
+                                />
+                            ))}
+                        </svg>
+
+                        {/* SOURCE NODES */}
+                        <div class="absolute inset-0 z-20 pointer-events-none">
+                            {activeStrata.map((s, i) => {
+                                const isFocused = selectedSource?.id === s.id;
+                                const isDimmed = selectedSource && !isFocused;
+                                return (
+                                    <div 
+                                        key={s.id} 
+                                        onClick={() => setSelectedSource(isFocused ? null : s)}
+                                        onMouseEnter={() => setHoveredSource(s.id)}
+                                        onMouseLeave={() => setHoveredSource(null)}
+                                        class={`source-node absolute p-5 border-l-[3px] max-w-[280px] animate-drift pointer-events-auto cursor-pointer glass-effect ${isDimmed ? 'opacity-5 blur-sm' : 'opacity-100'} ${hoveredSource === s.id ? 'border-black' : 'border-black/5 shadow-sm'}`} 
+                                        style={{ 
+                                            left: `${s.pos.x}%`, 
+                                            top: `${s.pos.y}%`, 
+                                            transform: 'translate(-50%, -50%)',
+                                            borderColor: (hoveredSource === s.id || isFocused) ? s.color : 'rgba(0,0,0,0.05)',
+                                            animationDelay: `${i * 5}s`
+                                        }}
+                                    >
+                                        <div class="flex justify-between items-center mb-2">
+                                            <span class="text-[6px] font-mono text-gray-400 uppercase font-black tracking-widest">{s.type}</span>
+                                            <span class="text-[6px] font-mono text-gray-300">#{s.year || 'ARKIV'}</span>
+                                        </div>
+                                        <p class={`serif italic transition-all duration-500 leading-snug ${hoveredSource === s.id || isFocused ? 'text-[13px] text-black' : 'text-[10px] text-gray-400'}`}>
+                                            "{hoveredSource === s.id || isFocused ? s.text : s.text.substring(0, 90) + '...'}"
+                                        </p>
+                                        {(hoveredSource === s.id || isFocused) && (
+                                            <div class="mt-3 pt-2 border-t border-black/5 flex justify-between items-center animate-in fade-in">
+                                                <span class="text-[5px] font-bold uppercase tracking-widest text-red-500">RELATION IDENTIFICERET</span>
+                                                <span class="text-[6px] font-mono text-gray-400 italic">{s.ref}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </main>
 
-                    {/* BOTTOM DASHBOARD: INPUT & RESPONSAREA */}
-                    <div class="fixed bottom-0 left-0 w-full z-40 flex flex-col items-center">
-                        
-                        {/* Monitor-logg som flyter rett over dashboardet */}
-                        <div class="w-full max-w-2xl px-10 mb-2 opacity-40 hover:opacity-100 transition-opacity">
-                            <div class="bg-white/90 backdrop-blur-sm p-3 border border-gray-100 text-[7px] font-mono text-gray-400 flex gap-6 justify-center uppercase tracking-widest">
-                                {logs.map((log, i) => (
-                                    <span key={i} class={i === logs.length - 1 ? "text-black font-black" : ""}>
-                                        [{log.time}] {log.msg}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Det fysiske skrivefeltet i bunnen */}
-                        <section class="w-full bg-white border-t border-gray-100 shadow-[0_-20px_50px_rgba(0,0,0,0.03)] p-10 pb-12 flex flex-col items-center">
-                            <div class="w-full max-w-2xl relative">
-                                
-                                {/* Overlay for fargemarkeringer i teksten */}
-                                <div class="absolute inset-0 pointer-events-none select-none text-2xl serif leading-relaxed text-transparent whitespace-pre-wrap break-words">
+                    {/* FLOATING GLASS INPUT BOX */}
+                    <div class="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-lg z-50 px-4">
+                        <div class="glass-effect rounded-[1.8rem] p-6 transition-all duration-700 hover:shadow-2xl">
+                            
+                            {/* Input Area */}
+                            <div class="relative">
+                                <div class="absolute inset-0 pointer-events-none select-none text-lg serif leading-relaxed text-transparent whitespace-pre-wrap break-words">
                                     {documentText.split(/(\s+)/).map((part, i) => {
                                         const clean = part.toLowerCase().replace(/[.,!?]/g, '');
                                         const color = words_map[clean];
+                                        const isResonant = hoveredSource && activeStrata.find(s => s.id === hoveredSource)?.text.toLowerCase().includes(clean);
+                                        
                                         return color ? (
-                                            <span key={i} class="border-b-2 border-dotted opacity-70" style={{ borderColor: color }}>{part}</span>
+                                            <span key={i} class={`border-b-2 transition-all duration-500 ${isResonant ? 'bg-yellow-50 brightness-105' : 'opacity-60'}`} style={{ borderColor: color, borderStyle: isResonant ? 'solid' : 'dotted' }}>{part}</span>
                                         ) : <span key={i}>{part}</span>;
                                     })}
                                 </div>
@@ -229,97 +246,43 @@
                                 <textarea 
                                     value={documentText} 
                                     onChange={e => setDocumentText(e.target.value)} 
-                                    placeholder="Indtast din arkitektoniske tese her..." 
-                                    class={`w-full text-2xl serif leading-relaxed text-black border-none focus:ring-0 p-0 placeholder-gray-100 resize-none bg-transparent h-[120px] transition-all duration-700 ${isSynthesizing ? 'opacity-20 blur-[1px]' : 'opacity-100'}`}
+                                    placeholder="Indtast arkitektonisk tese..." 
+                                    class={`w-full text-lg serif leading-relaxed text-black border-none focus:ring-0 p-0 placeholder-gray-300 resize-none bg-transparent h-[50px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
                                     spellCheck="false"
                                 />
-
-                                {syntheticResponse && (
-                                    <div class="mt-10 pt-10 border-t border-gray-50 animate-in fade-in slide-in-from-bottom-4 duration-1000">
-                                        <div class="flex items-center gap-4 mb-6 opacity-20">
-                                            <span class="text-[8px] font-mono font-black text-black uppercase tracking-[0.4em]">Kay Fisker: Kommentar</span>
-                                            <div class="h-[0.5px] flex-grow bg-black"></div>
-                                        </div>
-                                        <p class="text-3xl serif italic text-black leading-tight tracking-tight text-center">
-                                            "{syntheticResponse}"
-                                        </p>
-                                        <div class="mt-8 flex justify-center items-center gap-10 text-[7px] font-mono font-bold text-gray-300 uppercase tracking-widest">
-                                            <span class="flex items-center gap-2"><i data-lucide="cpu" class="w-3 h-3 text-red-500"></i> LoRA_v8.7_ACTIVE</span>
-                                            <span class="flex items-center gap-2 italic"><i data-lucide="git-branch" class="w-3 h-3"></i> Genealogisk Relation Etableret</span>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
-                        </section>
+
+                            {/* Response Area (Appears within the same bubble) */}
+                            {syntheticResponse && (
+                                <div class="border-t border-black/5 mt-5 pt-5 animate-in fade-in slide-in-from-bottom-2 duration-700">
+                                    <div class="flex items-center justify-center gap-3 mb-4 opacity-30">
+                                        <div class="h-[0.5px] w-8 bg-black"></div>
+                                        <span class="text-[7px] font-mono font-black text-black uppercase tracking-[0.3em]">Arkiv-Respons</span>
+                                        <div class="h-[0.5px] w-8 bg-black"></div>
+                                    </div>
+                                    <p class="text-xl serif italic text-gray-800 leading-tight tracking-tight text-center px-2">
+                                        "{syntheticResponse}"
+                                    </p>
+                                    <div class="mt-5 flex justify-between items-center text-[6px] font-mono font-bold text-gray-400 uppercase tracking-widest">
+                                        <span class="flex items-center gap-2"><i data-lucide="cpu" class="w-2.5 h-2.5 text-red-500"></i> FISKER_ENGINE_8.9</span>
+                                        <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]);}} class="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full">
+                                            <i data-lucide="refresh-cw" class="w-2 h-2"></i> RENS
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
-                    {/* DYBDEANALYSE LAYER (Dyk ned i kildene - Samme funksjonalitet som før) */}
-                    {selectedSource && (
-                        <div class="fixed inset-0 bg-white/80 backdrop-blur-2xl z-[100] flex justify-center items-center animate-in fade-in duration-500 p-16">
-                            <div class="w-full max-w-4xl h-full bg-white border border-gray-100 shadow-2xl flex flex-col animate-in zoom-in-95 duration-500">
-                                <div class="p-10 border-b border-gray-100 flex justify-between items-center bg-gray-50/30">
-                                    <div class="flex flex-col">
-                                        <span class="text-[10px] font-black uppercase text-red-500 tracking-[0.4em]">Genealogisk Dybdelæsning</span>
-                                        <h2 class="text-xl font-bold uppercase tracking-widest mt-2 serif italic text-black">{selectedSource.type} // {selectedSource.year || 'KADK ARKIV'}</h2>
-                                    </div>
-                                    <button onClick={() => setSelectedSource(null)} class="w-10 h-10 border border-gray-100 flex items-center justify-center hover:bg-black hover:text-white transition-all">
-                                        <i data-lucide="x" class="w-5 h-5"></i>
-                                    </button>
-                                </div>
-                                
-                                <div class="flex-grow overflow-y-auto p-16 space-y-24">
-                                    <section class="space-y-12">
-                                        <div class="flex items-center gap-4 text-[9px] font-black uppercase text-gray-300 tracking-[0.5em]">
-                                            <div class="w-12 h-[1px] bg-gray-200"></div> Arkivfragment
-                                        </div>
-                                        <p class="text-4xl serif italic leading-[1.1] text-black border-l-4 border-red-500 pl-16 py-4">
-                                            "{selectedSource.text}"
-                                        </p>
-                                        <div class="p-8 bg-gray-50/50 border border-gray-100">
-                                            <p class="text-[11px] font-mono text-gray-400 uppercase tracking-widest font-bold">Kilde: {selectedSource.ref}</p>
-                                        </div>
-                                    </section>
-
-                                    <section class="space-y-12 border-t border-gray-50 pt-20">
-                                        <div class="flex items-center gap-4 text-[9px] font-black uppercase text-blue-500 tracking-[0.5em]">
-                                            <div class="w-12 h-[1px] bg-blue-100"></div> Diskursiv Betydning
-                                        </div>
-                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-20">
-                                            <div class="space-y-4">
-                                                <span class="text-[8px] font-black uppercase text-gray-300 tracking-widest block">Historisk Kontekst</span>
-                                                <p class="text-[13px] serif text-gray-600 leading-relaxed italic">
-                                                    Dette fragment afslører hvordan arkitekturen bliver et redskab for social disiplin i efterkrigstidens Danmark.
-                                                </p>
-                                            </div>
-                                            <div class="space-y-4">
-                                                <span class="text-[8px] font-black uppercase text-gray-300 tracking-widest block">Relation til din Tese</span>
-                                                <p class="text-[13px] serif text-gray-600 leading-relaxed italic">
-                                                    Det understøtter din antagelse om arkitekturens maktstrukturer ved at vise hvordan formen dikterer adfærd.
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </section>
-                                </div>
-
-                                <div class="p-10 border-t border-gray-100 flex justify-between items-center">
-                                    <span class="text-[8px] font-mono text-gray-300 uppercase tracking-widest">Module: v.8.7_DASHBOARD_ENGINE</span>
-                                    <button class="bg-black text-white text-[10px] font-bold uppercase px-12 py-5 tracking-[0.3em] hover:bg-red-600 transition-all flex items-center gap-4">
-                                        Eksportér Data <i data-lucide="download" class="w-4 h-4"></i>
-                                    </button>
-                                </div>
-                            </div>
+                    {/* SUBTLE LOGS IN FOOTER */}
+                    <footer class="h-6 bg-transparent flex items-center justify-between px-8 text-[6px] font-bold uppercase tracking-[0.2em] text-gray-300 fixed bottom-0 w-full z-40">
+                        <div class="flex gap-8">
+                            <span class="text-black/30 flex items-center gap-2 font-black">KADK // DISKURS_APPARAT</span>
+                            {logs.slice(-1).map((log, i) => (
+                                <span key={i} class="text-black/40 animate-pulse">[{log.time}] {log.msg}</span>
+                            ))}
                         </div>
-                    )}
-
-                    {/* FOOTER */}
-                    <footer class="h-10 bg-white border-t border-gray-50 flex items-center justify-between px-8 text-[8px] font-bold uppercase tracking-[0.3em] text-gray-400 italic fixed bottom-0 w-full z-50">
-                        <div class="flex gap-10">
-                            <span class="flex items-center gap-3 text-black font-black uppercase tracking-widest"><div class="w-1.5 h-1.5 bg-[#e32219]"></div> KADK / Research Unit</span>
-                            <span class="hidden md:block">Metode: Relationel Genealogi</span>
-                        </div>
-                        <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]); addLog("System nulstillet.");}} class="hover:text-black transition-all flex items-center gap-2 underline underline-offset-4 decoration-gray-100">
-                            <i data-lucide="refresh-cw" class="w-2 h-2"></i> Nulstil Apparat
-                        </button>
+                        <span class="opacity-10 font-mono">STABLE_BUILD_8.9.0_GLASS</span>
                     </footer>
                 </div>
             );
