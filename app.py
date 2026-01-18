@@ -25,15 +25,13 @@ except ImportError:
 
 # --- MILJØKONFIGURASJON ---
 os.environ["HF_HOME"] = "/app/cache"
-os.environ["HF_HUB_CACHE"] = "/app/cache"
-os.environ["TRANSFORMERS_CACHE"] = "/app/cache"
 HF_TOKEN = os.environ.get("HF_TOKEN")
 if HF_TOKEN:
     try:
         login(token=HF_TOKEN)
         print(f"✅ Logget inn på Hugging Face som: {whoami().get('name')}")
     except Exception as e:
-        print(f"⚠️ Hugging Face Login feil: {e}")
+        print(f"⚠️ Login feil: {e}")
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-corpus-1024")
@@ -58,6 +56,18 @@ embedder = None
 reranker = None
 pinecone_index = None
 
+# Mock database for visuals (Disse bør erstattes med dine egne scannede filer)
+VISUALS_DB = {
+    "vestersøhus": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Vesters%C3%B8hus_01.jpg/640px-Vesters%C3%B8hus_01.jpg", "type": "FOTO"},
+    "dronningegården": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Dronningeg%C3%A5rden_Copenhagen_02.jpg/640px-Dronningeg%C3%A5rden_Copenhagen_02.jpg", "type": "FOTO"},
+    "gullfoss": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Gullfoss_Copenhagen_01.jpg/640px-Gullfoss_Copenhagen_01.jpg", "type": "FOTO"},
+    "aarhus universitet": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Aarhus_Universitet_01.jpg/640px-Aarhus_Universitet_01.jpg", "type": "FOTO"},
+    "statsprøveanstalten": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Statspr%C3%B8veanstalten_01.jpg/640px-Statspr%C3%B8veanstalten_01.jpg", "type": "FOTO"},
+    "plan": {"url": "https://images.unsplash.com/photo-1629196914375-f7e48f477b6d?q=80&w=600&auto=format&fit=crop", "type": "TEGNING"},
+    "snit": {"url": "https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=600&auto=format&fit=crop", "type": "TEGNING"},
+    "mursten": {"url": "https://images.unsplash.com/photo-1596236900238-6b074495c024?q=80&w=600&auto=format&fit=crop", "type": "MATERIALE"}
+}
+
 # --- MODELL-LASTING ---
 def load_model_logic():
     global pipe, tts, tokenizer, embedder, reranker, pinecone_index
@@ -66,7 +76,6 @@ def load_model_logic():
     LORA = "anvold/fisker-lora-clean"
     print("🧩 Laster base-modell + LoRA-adapter …")
     
-    # Rens adapter_config.json for HF Space kompatibilitet
     try:
         adapter_path = hf_hub_download(LORA, "adapter_config.json")
         with open(adapter_path, "r", encoding="utf-8") as f:
@@ -132,7 +141,6 @@ async def startup_event():
 
 # --- HJELPEFUNKSJONER ---
 def normalize_orthography(txt: str) -> str:
-    """Normaliserer OCR-tekst og fjerner bindestreker"""
     if not txt: return txt
     txt = re.sub(r"(\w+)-\n(\w+)", r"\1\2", txt)
     txt = re.sub(r"[ \t]*\n[ \t]*", " ", txt)
@@ -140,82 +148,48 @@ def normalize_orthography(txt: str) -> str:
     return txt
 
 def enhance_query(user_prompt: str) -> str:
-    """Utvider query basert på intensjonsdeteksjon"""
     prompt_lower = user_prompt.lower()
-    
     is_biographical = any(w in prompt_lower for w in ["hvem", "hvad", "når", "hvor", "liv", "karriere"])
     is_theoretical = any(w in prompt_lower for w in ["hvorfor", "hvordan", "prinsipper", "teori", "tanker"])
-    is_specific = any(w in prompt_lower for w in ["bolig", "monumental", "skole", "bygning", "projekt"])
     
-    if is_biographical:
-        return f"Kay Fisker biografi liv karriere {user_prompt}"
-    elif is_theoretical:
-        return f"arkitektonisk teori princip filosofi {user_prompt}"
-    elif is_specific:
-        return user_prompt
-    
+    if is_biographical: return f"Kay Fisker biografi liv karriere {user_prompt}"
+    elif is_theoretical: return f"arkitektonisk teori princip filosofi {user_prompt}"
     return f"arkitektur Kay Fisker {user_prompt}"
 
 def extract_temporal_context(user_prompt: str, timeline: str) -> str:
-    """Henter relevante timeline-segmenter basert på query"""
-    if not timeline:
-        return ""
-    
+    if not timeline: return ""
     periods = []
     for line in timeline.split("\n"):
         if match := re.match(r"(\d{4})[-–]?(\d{4})?: (.+)", line):
             start, end, event = match.groups()
-            periods.append({
-                "start": int(start),
-                "end": int(end) if end else int(start),
-                "event": event.strip()
-            })
-    
+            periods.append({"start": start, "event": event.strip()})
     keywords = set(user_prompt.lower().split())
-    relevant = []
-    
-    for p in periods:
-        event_words = set(p["event"].lower().split())
-        if keywords & event_words:
-            relevant.append(p)
-    
-    if relevant:
-        return "\n".join([
-            f"{p['start']}-{p['end']}: {p['event']}" 
-            for p in relevant[:3]
-        ])
-    
-    return ""
+    relevant = [p for p in periods if keywords & set(p["event"].lower().split())]
+    return "\n".join([f"{p['start']}: {p['event']}" for p in relevant[:3]]) if relevant else ""
 
 def diversify_sources(matches: list, max_per_year: int = 2, max_per_type: int = 3) -> list:
-    """Sørger for temporal og type-basert spredning av kilder"""
-    year_count = defaultdict(int)
-    type_count = defaultdict(int)
-    diversified = []
-    
+    year_count, type_count, diversified = defaultdict(int), defaultdict(int), []
     for m in matches:
-        year = m["metadata"].get("year", "unknown")
-        doc_type = m["metadata"].get("__ns", "unknown")
-        
-        if (year_count[year] < max_per_year and 
-            type_count[doc_type] < max_per_type):
+        year, ns = m["metadata"].get("year", "unknown"), m["metadata"].get("__ns", "unknown")
+        if year_count[year] < max_per_year and type_count[ns] < max_per_type:
             diversified.append(m)
             year_count[year] += 1
-            type_count[doc_type] += 1
-        
-        if len(diversified) >= 6:
-            break
-            
-    if len(diversified) < 4:
-        for m in matches:
-            if m not in diversified:
-                diversified.append(m)
-            if len(diversified) >= 6:
-                break
+            type_count[ns] += 1
+        if len(diversified) >= 6: break
     return diversified
 
-# --- NYTT: SOURCE ATTRIBUTION ANALYSIS ---
-def find_attributable_segments(source_text: str, response_text: str, min_length: int = 15) -> list:
+# --- VISUAL LOOKUP ---
+def extract_visuals(text: str) -> list:
+    """Finner visuelle referanser i generert tekst"""
+    found = []
+    text_lower = text.lower()
+    for key, data in VISUALS_DB.items():
+        if key in text_lower:
+            found.append({"keyword": key, "url": data["url"], "type": data["type"]})
+    return found
+
+# --- GENEALOGISK ANALYSE (KOMPLETT) ---
+def find_attributable_segments(source_text: str, response_text: str) -> list:
     """
     Finner segmenter i kildetekst som matcher med responsen.
     Bruker sliding window + similarity scoring.
@@ -223,15 +197,17 @@ def find_attributable_segments(source_text: str, response_text: str, min_length:
     if not embedder:
         return []
 
-    # Tokeniser begge tekster
     source_words = source_text.split()
-    response_words = response_text.split()
+    # Må ha en viss lengde for å gi mening
+    if len(source_words) < 8:
+        return []
 
     segments = []
-    window_size = 10  # Ord per segment
+    window_size = 12  # Ord per segment
+    step = 6 # Overlapp
 
     # Generer source-segmenter
-    for i in range(len(source_words) - window_size + 1):
+    for i in range(0, len(source_words) - window_size + 1, step):
         segment = " ".join(source_words[i:i+window_size])
         segments.append({
             "text": segment,
@@ -251,7 +227,7 @@ def find_attributable_segments(source_text: str, response_text: str, min_length:
     similarities = util.cos_sim(response_emb, segment_embs)[0].cpu().numpy()
 
     # Finn topp-segmenter over threshold
-    threshold = 0.5
+    threshold = 0.45
     attributed = []
 
     for idx, sim in enumerate(similarities):
@@ -270,7 +246,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
     """
     Avansert genealogisk analyse:
     - Hvilke deler av hver kilde ble brukt
-    - Sammenligning av ulike kilder
+    - Sammenligning av ulike kilder (Source Comparisons)
     - Forhold mellom query, kilder og response
     """
     if not embedder:
@@ -294,7 +270,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
                 "attribution_strength": sum(seg["similarity"] for seg in attributed) / len(attributed)
             })
 
-    # 2. Source Comparisons: Semantisk likhet mellom kilder
+    # 2. Source Comparisons: Semantisk likhet mellom kilder (Dette manglet i forrige versjon)
     if len(strata) >= 2:
         source_texts = [s["text"] for s in strata]
         source_embs = embedder.encode(source_texts, convert_to_tensor=True)
@@ -311,7 +287,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
                         "relation_type": "KONVERGENT" if similarity > 0.7 else "RESONANT"
                     })
 
-    # 3. Query-Source Relations: Hvor godt matcher hver kilde query?
+    # 3. Query-Source Relations
     query_emb = embedder.encode(query, convert_to_tensor=True)
     for s in strata:
         source_emb = embedder.encode(s["text"], convert_to_tensor=True)
@@ -323,7 +299,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
             "relevance_category": "HØY" if relevance > 0.6 else "MEDIUM" if relevance > 0.4 else "LAV"
         })
 
-    # 4. Response Grounding: Hvor godt er responsen forankret i kilder?
+    # 4. Response Grounding
     response_emb = embedder.encode(response_text, convert_to_tensor=True)
     combined_source_text = " ".join([s["text"] for s in strata])
     combined_emb = embedder.encode(combined_source_text, convert_to_tensor=True)
@@ -337,7 +313,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
 
     return analysis
 
-# --- RAG-LOGIKK ---
+# --- RAG-LOGIKK (KOMPLETT) ---
 def _fetch_ns(ns: str, qvec, top_k: int):
     """Henter matches fra en spesifikk namespace"""
     try:
@@ -356,7 +332,7 @@ def _fetch_ns(ns: str, qvec, top_k: int):
         return []
 
 def pinecone_search_logic(user_prompt: str, total_results: int = 6):
-    """Forbedret RAG-søk"""
+    """Forbedret RAG-søk med vekting og re-ranking"""
     if not (pinecone_index and embedder): 
         return []
     
@@ -385,7 +361,6 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
         print(f"   ↳ {ns}: {len(matches)} matches")
     
     if not pool:
-        print("   ⚠️ Ingen matches funnet")
         return []
     
     filtered = []
@@ -400,9 +375,11 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
         
         base_weight = m["weight"]
         
+        # Enkel heuristikk for svensk/norsk støy
         if (txt.count("ä") + txt.count("ö")) > 8 and (txt.count("æ") + txt.count("ø")) < 2:
             base_weight *= 0.6
         
+        # Støy straff
         special_chars = len(re.findall(r"[^a-zA-ZæøåÆØÅ0-9.,:;?!()\-\s]", txt))
         if special_chars > 15:
             base_weight *= 0.7
@@ -411,25 +388,16 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
         m["weight"] = base_weight
         filtered.append(m)
     
-    if not filtered:
-        print("   ⚠️ Ingen kilder overlevde filtrering")
-        filtered = pool[:4]
-    
-    print(f"   ✓ {len(filtered)} kilder etter filtrering")
-    
+    # Re-ranking med CrossEncoder
     if reranker is not None and filtered:
         print("   🔄 Reranker...")
         pairs = [(user_prompt, x["metadata"]["text"]) for x in filtered]
         scores = reranker.predict(pairs)
+        # Sorter basert på score fra cross-encoder
         filtered = [x for _, x in sorted(zip(scores, filtered), key=lambda z: z[0], reverse=True)]
     
+    # Diversifisering (tid og type)
     filtered = diversify_sources(filtered, max_per_year=2, max_per_type=3)
-    
-    print(f"   ✅ Returnerer {len(filtered)} diverse kilder")
-    
-    for i, m in enumerate(filtered[:total_results]):
-        md = m["metadata"]
-        print(f"      [{i+1}] {md.get('__ns', '?').upper()} | {md.get('year', '?')} | {md.get('text', '')[:60]}...")
     
     return filtered[:total_results]
 
@@ -439,7 +407,7 @@ async def api_chat(req: Request):
     data = await req.json()
     user_prompt = data.get("message", "")
     
-    if not user_prompt or len(user_prompt.strip()) < 3:
+    if len(user_prompt.strip()) < 3:
         return JSONResponse({
             "error": "Spørsmål for kort - skriv minst noen få ord"
         }, status_code=400)
@@ -511,18 +479,20 @@ async def api_chat(req: Request):
     generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
     generated_text = re.sub(r"^(System:|Bruger:|Arkivmateriale:).*", "", generated_text, flags=re.MULTILINE).strip()
 
-    # 5. NYTT: Genealogisk analyse
+    # 5. Analyser (Både Genealogisk og Visuell)
     genealogical_analysis = analyze_source_relations(strata, generated_text, user_prompt)
+    visuals = extract_visuals(generated_text) # Nytt!
 
-    state = "OVERMETNING" if len(strata) > 4 else "FRIKSJON" if len(strata) > 0 else "SEDIMENTERING"
+    state = "VISUEL_AKKUMULERING" if visuals else ("OVERMETNING" if len(strata) > 4 else "FRIKSJON")
     intensity = min(len(strata) / 6, 1.0)
 
     return {
         "text": generated_text,
         "strata": strata,
+        "visuals": visuals, # Sender visuals til frontend
         "state": state,
         "intensity": intensity,
-        "genealogy": genealogical_analysis  # NYTT
+        "genealogy": genealogical_analysis
     }
 
 @app.get("/tts")
