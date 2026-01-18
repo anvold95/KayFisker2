@@ -3,15 +3,117 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Genealogisk Apparat v.10.3</title>
+    <title>Fisker / Genealogisk Apparat v.10.4</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        fisker: {
+                            red: '#9B2C2C',
+                            ink: '#1a1a1a',
+                            paper: '#f5f5f0',
+                            glass: 'rgba(255, 255, 255, 0.65)'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        serif: ['Libre Baskerville', 'serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { 
+            background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%);
+            color: #1a1a1a; 
+            overflow: hidden;
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.75);
+            backdrop-filter: blur(20px) saturate(180%);
+            border-left: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: -10px 0 40px rgba(0, 0, 0, 0.03);
+        }
+        
+        .glass-membrane {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
+        }
+
+        @keyframes glow-pulse {
+            0%, 100% { opacity: 0.08; transform: scale(1); }
+            50% { opacity: 0.15; transform: scale(1.05); }
+        }
+        .animate-glow { animation: glow-pulse 12s ease-in-out infinite; }
+        
+        @keyframes breathe {
+            0%, 100% { opacity: 0.2; }
+            50% { opacity: 0.4; }
+        }
+        .animate-breathe { animation: breathe 6s ease-in-out infinite; }
+
+        .source-node { 
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); 
+            cursor: move; 
+        }
+        .source-node:hover { 
+            scale: 1.02; 
+            z-index: 100; 
+            background: rgba(255, 255, 255, 0.98) !important; 
+            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.08); 
+            width: 320px !important; 
+        }
+        .source-node.active { 
+            border: 1px solid #9B2C2C; 
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1); 
+            z-index: 50; 
+            width: 350px !important; 
+            background: rgba(255, 255, 255, 0.98); 
+        }
+        .source-node.dragging { 
+            opacity: 0.8; 
+            cursor: grabbing; 
+            z-index: 200; 
+        }
+        
+        .visual-node { 
+            border-radius: 2px; 
+            overflow: hidden; 
+            border: 4px solid white; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15); 
+            opacity: 0; 
+            animation: pop-in 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; 
+            animation-delay: 1.2s; 
+        }
+        @keyframes pop-in { 
+            0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 
+            100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 
+        }
+        
+        .visual-line { 
+            stroke-dasharray: 1000; 
+            stroke-dashoffset: 1000; 
+            animation: draw-line 1.5s ease-out forwards; 
+        }
+        @keyframes draw-line { 
+            to { stroke-dashoffset: 0; } 
+        }
+    </style>
 </head>
-<body className="bg-[#f2f2f2] selection:bg-red-200 overflow-hidden">
+<body class="bg-fisker-paper selection:bg-fisker-red selection:text-white overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -32,7 +134,7 @@
 
         const App = () => {
             const [documentText, setDocumentText] = useState("");
-            const [lastQuery, setLastQuery] = useState("");
+            const [lastQuery, setLastQuery] = useState(""); 
             const [activeStrata, setActiveStrata] = useState([]);
             const [visualNodes, setVisualNodes] = useState([]); 
             const [detectedVisuals, setDetectedVisuals] = useState([]);
@@ -58,11 +160,11 @@
             });
 
             const rams = {
-                red: "rgba(227, 34, 25, 0.7)",
-                blue: "rgba(0, 107, 180, 0.7)",
-                orange: "rgba(255, 160, 0, 0.6)",
-                purple: "rgba(147, 51, 234, 0.6)",
-                green: "rgba(34, 197, 94, 0.6)"
+                red: "#9B2C2C",
+                blue: "#1a1a1a",
+                orange: "#a16207",
+                purple: "#7e22ce",
+                green: "#15803d"
             };
 
             const addLog = (msg) => {
@@ -82,7 +184,6 @@
                 const baseDepth = 15 + Math.min((age / 100) * 60, 60);
                 
                 const forbiddenZone = { xMin: 20, xMax: 80, yMin: 70, yMax: 100 };
-                const nodeWidth = 28;
                 const nodeHeight = 20;
                 const minDistance = 30;
                 
@@ -104,12 +205,6 @@
                         const angle = (i / 16) * 2 * Math.PI;
                         const x = 50 + radius * Math.cos(angle);
                         const y = baseDepth + radius * 0.5 * Math.sin(angle);
-                        if (isValidPosition(x, y)) return { x, y };
-                    }
-                }
-                
-                for (let y = 10; y <= 80; y += 8) {
-                    for (let x = 10; x <= 90; x += 8) {
                         if (isValidPosition(x, y)) return { x, y };
                     }
                 }
@@ -241,10 +336,10 @@
                             <span 
                                 key={i}
                                 onClick={() => spawnVisual(match)}
-                                className={`cursor-pointer transition-all border-b-2 font-medium mx-0.5 px-1 rounded-sm ${
+                                className={`cursor-pointer transition-all border-b font-medium mx-0.5 px-1 rounded-sm ${
                                     isActive 
-                                        ? 'border-blue-500 text-blue-700 bg-blue-50' 
-                                        : 'border-dashed border-gray-400 text-gray-700 hover:border-blue-400 hover:bg-blue-50/50'
+                                        ? 'border-fisker-red text-fisker-red bg-red-50' 
+                                        : 'border-dashed border-gray-400 text-gray-600 hover:border-fisker-ink hover:bg-gray-50'
                                 }`}
                                 title="Klik for å projisere bilde">
                                 <LucideIcon name="image" size={14} className="inline mr-1 mb-0.5 opacity-50" />
@@ -337,8 +432,8 @@
                     const sourceB = activeStrata.find(s => s.ref === shift.source_b);
                     if (!sourceA || !sourceB) return null;
                     
-                    const strokeColor = shift.type === "MAJOR_SHIFT" ? "#991b1b" : "#c2410c";
-                    const strokeWidth = shift.type === "MAJOR_SHIFT" ? 2 : 1;
+                    const strokeColor = shift.type === "MAJOR_SHIFT" ? "#7f1d1d" : "#9a3412";
+                    const strokeWidth = shift.type === "MAJOR_SHIFT" ? 1.5 : 1;
                     
                     return (
                         <g key={`shift-${i}`}>
@@ -346,7 +441,7 @@
                                 x1={`${sourceA.pos.x}%`} y1={`${sourceA.pos.y}%`}
                                 x2={`${sourceB.pos.x}%`} y2={`${sourceB.pos.y}%`}
                                 stroke={strokeColor} strokeWidth={strokeWidth}
-                                strokeDasharray="5,3" opacity="0.4"
+                                strokeDasharray="5,3" opacity="0.3"
                             />
                         </g>
                     );
@@ -366,73 +461,26 @@
                         <line key={`concept-${i}`}
                             x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
                             x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                            stroke="#6b21a8" strokeWidth="1.5"
-                            strokeDasharray="3,2" opacity="0.5"
+                            stroke="#7e22ce" strokeWidth="1.5"
+                            strokeDasharray="3,2" opacity="0.4"
                         />
                     );
                 });
             };
 
             return (
-                <div className="h-screen w-screen flex flex-col relative bg-[#f2f2f2] font-sans overflow-hidden">
-                    <style>{`
-                        body { font-family: 'Inter', sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
-                        .serif { font-family: 'Libre Baskerville', serif; }
-                        .mono { font-family: 'IBM Plex Mono', monospace; }
-                        
-                        @keyframes glow-pulse { 0% { opacity: 0.08; transform: scale(1); } 50% { opacity: 0.15; transform: scale(1.05); } 100% { opacity: 0.08; transform: scale(1); } }
-                        .animate-glow { animation: glow-pulse 15s ease-in-out infinite; }
-                        
-                        @keyframes breathe { 0% { opacity: 0; transform: scale(0.9); } 50% { opacity: 0.3; transform: scale(1.05); } 100% { opacity: 0; transform: scale(1.2); } }
-                        .animate-breathe { animation: breathe 5s ease-in-out infinite; }
-                        
-                        .glass-membrane { background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05)); backdrop-filter: blur(50px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.3); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.1); }
-                        
-                        .source-node { transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); cursor: move; }
-                        .source-node:hover { scale: 1.03; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.15); width: 380px !important; }
-                        .source-node.active { border: 2px solid black; box-shadow: 0 20px 60px rgba(0,0,0,0.15); z-index: 50; width: 450px !important; background: rgba(255, 255, 255, 0.95); }
-                        .source-node.dragging { opacity: 0.7; cursor: grabbing; z-index: 200; }
-                        
-                        .visual-node { border-radius: 4px; overflow: hidden; border: 4px solid white; box-shadow: 0 10px 30px rgba(0,0,0,0.15); opacity: 0; animation: pop-in 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; animation-delay: 1.2s; }
-                        @keyframes pop-in { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
-                        
-                        .visual-line { stroke-dasharray: 1000; stroke-dashoffset: 1000; animation: draw-line 1.5s ease-out forwards; }
-                        @keyframes draw-line { to { stroke-dashoffset: 0; } }
-                        
-                        /* Organisk notater-stil */
-                        .genealogy-note {
-                            background: linear-gradient(to bottom, #fffef8 0%, #fefcf3 100%);
-                            border-left: 3px solid #d6d3d1;
-                            box-shadow: 2px 2px 8px rgba(0,0,0,0.08);
-                        }
-                        
-                        .handwritten-marker {
-                            position: relative;
-                            display: inline-block;
-                        }
-                        .handwritten-marker::after {
-                            content: '';
-                            position: absolute;
-                            left: 0;
-                            bottom: 2px;
-                            width: 100%;
-                            height: 2px;
-                            background: currentColor;
-                            opacity: 0.3;
-                            transform: scaleX(1.05) rotate(-0.5deg);
-                        }
-                    `}</style>
-
+                <div className="h-screen w-screen flex flex-col relative bg-fisker-paper font-sans overflow-hidden">
+                    {/* TOPBAR */}
                     <header className="h-12 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/20 backdrop-blur-md">
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 bg-[#e32219] flex items-center justify-center text-white font-black text-[10px]">F</div>
-                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.3</h1>
+                                <div className="w-5 h-5 bg-fisker-red flex items-center justify-center text-white font-serif font-bold text-[10px]">F</div>
+                                <h1 className="text-[11px] font-mono font-bold uppercase tracking-[0.2em] text-stone-700">Genealogisk Apparat v.10.4</h1>
                             </div>
-                            <span className={`text-[10px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-blue-500 animate-pulse' : 'text-gray-400'}`}>{discursiveState}</span>
+                            <span className={`text-[9px] mono font-bold tracking-widest uppercase ${isSynthesizing ? 'text-fisker-red animate-pulse' : 'text-stone-400'}`}>{discursiveState}</span>
                             
                             {genealogy?.epistemic_levels && (
-                                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-100/80">
+                                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-100/80 border border-stone-200">
                                     <span className={`text-[9px] mono font-medium tracking-wide ${
                                         genealogy.epistemic_levels.primary_level === 'ARKIVFAKTA' ? 'text-emerald-700' :
                                         genealogy.epistemic_levels.primary_level === 'ARKIV-NÆR TOLKNING' ? 'text-sky-700' :
@@ -465,7 +513,7 @@
                         
                         {isSynthesizing && (
                             <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
-                                <div className="w-[50vh] h-[50vh] rounded-full blur-[100px] bg-gradient-to-tr from-sky-300 to-cyan-200 opacity-15 animate-breathe"></div>
+                                <div className="w-[50vh] h-[50vh] rounded-full blur-[100px] bg-gradient-to-tr from-stone-200 to-gray-200 opacity-30 animate-breathe"></div>
                             </div>
                         )}
 
@@ -478,7 +526,7 @@
                                         background: `radial-gradient(circle, ${s.color} 0%, transparent 80%)`, 
                                         transform: 'translate(-50%, -50%)', 
                                         animationDelay: `${i * 2}s`, 
-                                        opacity: 0.25 
+                                        opacity: 0.12 
                                     }} 
                                 /> 
                             ))}
@@ -489,7 +537,7 @@
                                 <path key={`vis-link-${i}`} 
                                     d={`M ${viewport.w / 2} ${viewport.h - 140} Q ${v.pos.x * viewport.w / 100} ${viewport.h - 50} ${v.pos.x * viewport.w / 100} ${v.pos.y * viewport.h / 100}`}
                                     stroke="#3b82f6" strokeWidth="1.5" fill="none" 
-                                    className="visual-line opacity-50" 
+                                    className="visual-line opacity-30" 
                                 /> 
                             ))}
                             
@@ -499,14 +547,14 @@
                             {selectedSources.length > 1 && selectedSources.map((s, i) => {
                                 const next = selectedSources[i + 1];
                                 if (!next) return null;
-                                return <line key={`link-${i}`} x1={`${s.pos.x}%`} y1={`${s.pos.y}%`} x2={`${next.pos.x}%`} y2={`${next.pos.y}%`} stroke="#0ea5e9" strokeWidth="2" opacity="0.5" />;
+                                return <line key={`link-${i}`} x1={`${s.pos.x}%`} y1={`${s.pos.y}%`} x2={`${next.pos.x}%`} y2={`${next.pos.y}%`} stroke="#0ea5e9" strokeWidth="2" opacity="0.3" />;
                             })}
 
                             {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSources.find(ss => ss.id === s.id)) && ( 
                                 <path key={`path-${i}`} 
                                     d={`M ${viewport.w / 2} ${viewport.h - 140} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`} 
                                     stroke={s.color} strokeWidth="1" fill="none" 
-                                    strokeDasharray="4,2" className="animate-in fade-in duration-700 opacity-40" 
+                                    strokeDasharray="4,2" className="animate-in fade-in duration-700 opacity-30" 
                                 /> 
                             ))}
                         </svg>
@@ -516,8 +564,7 @@
                                 const isSelected = selectedSources.find(ss => ss.id === s.id);
                                 const isDragging = draggedNode === s.id;
                                 const isDimmed = selectedSources.length > 0 && !isSelected;
-                                const attribution = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
-                                const hasAttribution = attribution && attribution.segments && attribution.segments.length > 0;
+                                const hasAttribution = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                 
                                 const displayText = s.excerpt || s.text;
                                 const textLength = isSelected ? 900 : (hoveredSource === s.id ? 250 : 110);
@@ -528,27 +575,28 @@
                                         onClick={() => toggleSource(s)}
                                         onMouseEnter={() => setHoveredSource(s.id)}
                                         onMouseLeave={() => setHoveredSource(null)}
-                                        className={`source-node absolute p-6 w-[290px] pointer-events-auto bg-white/40 backdrop-blur-xl border-l-4 border border-white/30 ${
+                                        className={`source-node absolute p-6 w-[280px] pointer-events-auto bg-white/50 backdrop-blur-xl border-l-2 border border-white/40 ${
                                             isDragging ? 'dragging' : ''
                                         } ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected ? 'active' : 'shadow-sm'}`} 
                                         style={{ 
                                             left: `${s.pos.x}%`, top: `${s.pos.y}%`, 
                                             transform: 'translate(-50%, -50%)', 
-                                            borderColor: (hoveredSource === s.id || isSelected) ? s.color : 'rgba(0,0,0,0.05)',
+                                            borderColor: (hoveredSource === s.id || isSelected) ? s.color : 'rgba(255,255,255,0.5)',
+                                            borderLeftColor: s.color,
                                             cursor: isDragging ? 'grabbing' : 'move'
                                         }}>
                                         <div className="flex justify-between items-center mb-3">
-                                            <span className="text-[10px] mono font-medium uppercase tracking-wider" style={{ color: s.color }}>
+                                            <span className="text-[10px] mono font-medium uppercase tracking-wider text-stone-600">
                                                 {s.type}
                                             </span>
                                             <div className="flex items-center gap-2">
-                                                {hasAttribution && <div className="w-2 h-2 rounded-full bg-red-500" title="Brukt i svar"></div>}
-                                                {isSelected && <LucideIcon name="check-circle" size={14} className="text-green-600" />}
+                                                {hasAttribution && <div className="w-2 h-2 rounded-full bg-fisker-red" title="Brukt i svar"></div>}
+                                                {isSelected && <LucideIcon name="check-circle" size={14} className="text-emerald-600" />}
                                                 <span className="text-[10px] mono text-gray-400">#{s.year || '?'}</span>
                                             </div>
                                         </div>
                                         <p className={`serif italic transition-all duration-500 leading-relaxed ${
-                                            hoveredSource === s.id || isSelected ? 'text-[15px] text-black' : 'text-[13px] text-gray-600'
+                                            hoveredSource === s.id || isSelected ? 'text-[14px] text-stone-900' : 'text-[12px] text-stone-600'
                                         }`}>
                                             "{displayText.substring(0, textLength)}{displayText.length > textLength ? '...' : ''}"
                                         </p>
@@ -591,10 +639,9 @@
                         </div>
                     )}
 
-                    {/* ORGANISK GENEALOGY SIDEBAR */}
                     {(selectedSources.length > 0 || showGenealogy) && (
-                        <aside className="fixed right-0 top-12 bottom-0 w-[520px] bg-stone-50 border-l border-stone-200 z-40 overflow-y-auto flex flex-col shadow-xl">
-                            <header className="p-6 border-b border-stone-200 sticky top-0 z-10 backdrop-blur-md bg-stone-50/95">
+                        <aside className="fixed right-0 top-12 bottom-0 w-[520px] glass-panel z-40 overflow-y-auto flex flex-col shadow-xl">
+                            <header className="p-6 border-b border-white/20 sticky top-0 z-10 backdrop-blur-md bg-white/40">
                                 <div className="flex justify-between items-center mb-3">
                                     <div>
                                         <h2 className="text-[13px] font-bold text-stone-800 mb-1">
@@ -607,20 +654,18 @@
                                         )}
                                     </div>
                                     <button onClick={() => { closeSidebar(); setShowGenealogy(false); }} 
-                                        className="w-9 h-9 rounded-full hover:bg-stone-200 flex items-center justify-center">
-                                        <LucideIcon name="x" size={17} />
+                                        className="w-8 h-8 rounded-full hover:bg-stone-200/50 flex items-center justify-center">
+                                        <LucideIcon name="x" size={16} />
                                     </button>
                                 </div>
                                 
                                 {genealogy?.concept_genealogies && Object.keys(genealogy.concept_genealogies).length > 0 && (
                                     <div className="mt-4">
-                                        <label className="text-[10px] mono font-medium text-stone-600 mb-2 block">
-                                            Spor begrep
-                                        </label>
+                                        <label className="text-[10px] mono font-medium text-stone-500 mb-2 block">Spor begrep</label>
                                         <select 
                                             value={selectedConcept || ""}
                                             onChange={(e) => setSelectedConcept(e.target.value || null)}
-                                            className="w-full text-[11px] mono p-2 border border-stone-300 rounded bg-white">
+                                            className="w-full text-[11px] mono p-2 border border-stone-200 rounded bg-white/50">
                                             <option value="">-- Velg begrep --</option>
                                             {Object.keys(genealogy.concept_genealogies).map(concept => (
                                                 <option key={concept} value={concept}>
@@ -633,11 +678,10 @@
                             </header>
                             
                             <div className="flex-grow overflow-y-auto p-6 space-y-6">
-                                {/* SELECTED SOURCES */}
                                 {selectedSources.length > 0 && selectedSources.map((s, i) => {
                                     const attr = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                     return (
-                                        <div key={s.id} className="genealogy-note p-5 rounded-sm space-y-4">
+                                        <div key={s.id} className="bg-white/60 p-5 rounded-sm space-y-4 border border-white">
                                             <div className="flex items-start justify-between">
                                                 <div>
                                                     <div className="text-[10px] mono font-medium text-stone-600 mb-1">{s.type}</div>
@@ -653,11 +697,9 @@
                                                     </span>
                                                 )}
                                             </div>
-                                            
-                                            <div className="serif text-[15px] leading-relaxed text-stone-800">
+                                            <div className="serif text-[14px] leading-relaxed text-stone-800">
                                                 {getHighlightedText(s.text, syntheticResponse, s.ref)}
                                             </div>
-                                            
                                             {s.excerpt_explanation && (
                                                 <div className="text-[11px] text-stone-600 leading-relaxed border-l-2 border-stone-300 pl-3">
                                                     {s.excerpt_explanation}
@@ -667,14 +709,13 @@
                                     );
                                 })}
                                 
-                                {/* GENEALOGICAL ANALYSIS */}
                                 {showGenealogy && genealogy && (
                                     <>
                                         {genealogy.discursive_shifts?.shifts?.length > 0 && (
                                             <div className="space-y-3">
                                                 <h3 className="text-[11px] font-bold text-stone-700 mb-3">Diskursive Brudd</h3>
                                                 {genealogy.discursive_shifts.shifts.map((shift, i) => (
-                                                    <div key={i} className="genealogy-note p-4 rounded-sm">
+                                                    <div key={i} className="bg-white/60 p-4 rounded-sm border-l-2 border-red-300">
                                                         <div className="flex items-center justify-between mb-2">
                                                             <span className="text-[10px] mono font-medium text-stone-700">
                                                                 {shift.year_from} → {shift.year_to}
@@ -696,10 +737,10 @@
                                         {selectedConcept && genealogy.concept_genealogies?.[selectedConcept] && (
                                             <div className="space-y-3">
                                                 <h3 className="text-[11px] font-bold text-stone-700 mb-3">
-                                                    <span className="handwritten-marker">"{selectedConcept}"</span> gjennom tid
+                                                    "{selectedConcept}" gjennom tid
                                                 </h3>
                                                 {genealogy.concept_genealogies[selectedConcept].occurrences.map((occ, i) => (
-                                                    <div key={i} className="genealogy-note p-4 rounded-sm border-l-4 border-purple-300">
+                                                    <div key={i} className="bg-white/60 p-4 rounded-sm border-l-2 border-purple-300">
                                                         <div className="text-[10px] mono font-medium text-purple-900 mb-2">
                                                             {occ.year} — {occ.source_ref}
                                                         </div>
@@ -708,9 +749,8 @@
                                                         </p>
                                                     </div>
                                                 ))}
-                                                
                                                 {genealogy.concept_genealogies[selectedConcept].semantic_drift?.length > 0 && (
-                                                    <div className="genealogy-note p-4 rounded-sm">
+                                                    <div className="bg-white/60 p-4 rounded-sm">
                                                         <div className="text-[10px] mono font-medium text-stone-700 mb-2">Semantisk Drift</div>
                                                         {genealogy.concept_genealogies[selectedConcept].semantic_drift.map((drift, i) => (
                                                             <div key={i} className="text-[10px] mono text-stone-600 mb-1">
@@ -729,7 +769,7 @@
                                         {genealogy.power_knowledge && (
                                             <div className="space-y-3">
                                                 <h3 className="text-[11px] font-bold text-stone-700 mb-3">Kildefordeling</h3>
-                                                <div className="genealogy-note p-4 rounded-sm space-y-2">
+                                                <div className="bg-white/60 p-4 rounded-sm space-y-2">
                                                     <div className="flex justify-between items-center">
                                                         <span className="text-[10px] mono text-stone-600">Primærkilder</span>
                                                         <span className="text-[14px] font-bold text-sky-700">{genealogy.power_knowledge.hierarchy.PRIMARY}</span>
@@ -763,7 +803,7 @@
                                     onChange={e => setDocumentText(e.target.value)} 
                                     onKeyDown={handleKeyPress} 
                                     placeholder="Indtast genealogisk spørgsmål..." 
-                                    className={`w-full text-[16px] serif leading-relaxed text-black border-none outline-none p-0 placeholder-black/20 resize-none bg-transparent h-[60px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
+                                    className={`w-full text-[16px] serif leading-relaxed text-stone-900 border-none outline-none p-0 placeholder-stone-400 resize-none bg-transparent h-[60px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
                                     spellCheck="false" 
                                 />
                                 <div className="flex justify-end mt-2 gap-2">
@@ -778,19 +818,19 @@
                                     <button 
                                         onClick={handleSubmit} 
                                         disabled={isSynthesizing || !documentText.trim()} 
-                                        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/5 hover:bg-black/10 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-white/20">
+                                        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-900/5 hover:bg-stone-900/10 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-stone-900/10">
                                         <LucideIcon name="send" size={12} /> {isSynthesizing ? 'Analyserer...' : 'Genealogiser (⌘↵)'}
                                     </button>
                                 </div>
                             </div>
                             
                             {syntheticResponse && (
-                                <div className="border-t border-white/20 mt-6 pt-6 animate-in fade-in slide-in-from-bottom-2 duration-1000">
-                                    <div className="text-[21px] serif italic text-gray-900 leading-snug tracking-tight text-center px-2">
+                                <div className="border-t border-stone-300/30 mt-6 pt-6 animate-in fade-in slide-in-from-bottom-2 duration-1000">
+                                    <div className="text-[21px] serif italic text-stone-900 leading-snug tracking-tight text-center px-2">
                                         {renderResponseWithVisuals(syntheticResponse)}
                                     </div>
                                     <div className="mt-6 flex justify-between items-center text-[9px] mono text-stone-500">
-                                        <span>v.10.3</span>
+                                        <span>v.10.4 / REFINED</span>
                                         <button onClick={resetAll} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full">
                                             <LucideIcon name="refresh-cw" size={12} /> RENS
                                         </button>
@@ -800,7 +840,7 @@
                         </div>
                     </div>
 
-                    <footer className="h-8 bg-transparent flex items-center justify-between px-8 text-[8px] mono text-stone-400 fixed bottom-0 w-full z-40">
+                    <footer className="h-8 bg-transparent flex items-center justify-between px-8 text-[8px] mono text-stone-400 fixed bottom-0 w-full z-40 pointer-events-none">
                         <div className="flex gap-8">
                             <span className="text-stone-300">KADK // GENEALOGI</span>
                             {logs.slice(-1).map((log, i) => ( 
