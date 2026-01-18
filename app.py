@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import soundfile as sf
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, Counter
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,8 @@ from peft import PeftModel
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
 from pinecone import Pinecone, ServerlessSpec
 from huggingface_hub import hf_hub_download, login, whoami
+from scipy.spatial.distance import cosine
+from sklearn.cluster import DBSCAN
 
 try:
     from text_cleaner import clean_text
@@ -68,6 +70,16 @@ VISUALS_DB = {
     "snit": {"url": "https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=600&auto=format&fit=crop", "type": "TEGNING"},
     "mursten": {"url": "https://images.unsplash.com/photo-1596236900238-6b074495c024?q=80&w=600&auto=format&fit=crop", "type": "MATERIALE"}
 }
+
+# --- FOUCAULDIANSKE NØKKELORD (Arkitektonisk Diskurs) ---
+GENEALOGICAL_CONCEPTS = [
+    "funksjonalisme", "funktionalism", "tradisjon", "tradition", "modernisme", 
+    "klassisisme", "bolig", "bebyggelse", "bymæssig", "monumentalitet",
+    "materialitet", "tektonik", "proportioner", "skala", "rumlig",
+    "social", "samfund", "arbejder", "kollektiv", "privat",
+    "hygiejne", "sundhed", "lys", "luft",
+    "standardisering", "industrialisering", "håndværk", "præfabrikation"
+]
 
 # --- MODELL-LASTING ---
 def load_model_logic():
@@ -213,11 +225,11 @@ def extract_visuals(text: str) -> list:
             found.append({"keyword": key, "url": data["url"], "type": data["type"]})
     return found
 
-# --- FORBEDRET SEGMENT-EKSTRAKSJON MED STRENGERE MATCHING ---
+# --- FORBEDRET SEGMENT-EKSTRAKSJON (fra v.9.9) ---
 def extract_most_relevant_excerpt(source_text: str, response_text: str, min_words: int = 20, max_words: int = 80) -> dict:
     """
     Finner det mest relevante utdraget fra kilden basert på FAKTISK semantisk overlapp.
-    Returnerer både utdrag og forklaringog relevans-score.
+    Returnerer både utdrag, forklaring og relevans-score.
     """
     if not embedder or not source_text or not response_text:
         return {
@@ -335,8 +347,190 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
     attributed.sort(key=lambda x: x["similarity"], reverse=True)
     return attributed[:3]
 
+# --- FOUCAULDIANSK GENEALOGISK ANALYSE (fra v.10.0) ---
+
+def detect_discursive_shifts(strata: list) -> dict:
+    """
+    Detekterer DISKURSIVE BRUDD og begrepsforskyninger over tid.
+    Inspirert av Foucault's "Archaeology of Knowledge".
+    """
+    if not embedder or len(strata) < 3:
+        return {"shifts": [], "periods": []}
+    
+    # Sorter kilder temporalt
+    sorted_strata = sorted([s for s in strata if s.get("year")], key=lambda x: int(x["year"]))
+    
+    if len(sorted_strata) < 3:
+        return {"shifts": [], "periods": []}
+    
+    # Embed alle tekster
+    texts = [s["text"] for s in sorted_strata]
+    embeddings = embedder.encode(texts, convert_to_tensor=True)
+    
+    # Beregn diskursiv avstand mellom påfølgende perioder
+    shifts = []
+    for i in range(len(sorted_strata) - 1):
+        distance = cosine(
+            embeddings[i].cpu().numpy(),
+            embeddings[i+1].cpu().numpy()
+        )
+        
+        # DISKURSIVT BRUDD hvis avstand > 0.35
+        if distance > 0.35:
+            shifts.append({
+                "year_from": sorted_strata[i]["year"],
+                "year_to": sorted_strata[i+1]["year"],
+                "distance": float(distance),
+                "type": "MAJOR_SHIFT" if distance > 0.5 else "MINOR_SHIFT",
+                "source_a": sorted_strata[i]["ref"],
+                "source_b": sorted_strata[i+1]["ref"]
+            })
+    
+    # Identifiser diskursive PERIODER (clustering)
+    if len(embeddings) >= 3:
+        clustering = DBSCAN(eps=0.3, min_samples=2, metric='cosine')
+        labels = clustering.fit_predict(embeddings.cpu().numpy())
+        
+        periods = []
+        for label in set(labels):
+            if label == -1:  # Noise
+                continue
+            indices = [i for i, l in enumerate(labels) if l == label]
+            period_strata = [sorted_strata[i] for i in indices]
+            years = [int(s["year"]) for s in period_strata]
+            
+            periods.append({
+                "period_id": int(label),
+                "year_range": f"{min(years)}-{max(years)}",
+                "source_count": len(period_strata),
+                "sources": [s["ref"] for s in period_strata],
+                "coherence": "HIGH"  # Innenfor samme cluster = høy koherens
+            })
+    else:
+        periods = []
+    
+    return {
+        "shifts": shifts,
+        "periods": periods,
+        "total_sources": len(sorted_strata),
+        "temporal_span": f"{sorted_strata[0]['year']}-{sorted_strata[-1]['year']}" if sorted_strata else None
+    }
+
+def trace_concept_genealogy(strata: list, concept: str) -> dict:
+    """
+    Sporer en BEGREPETS GENEALOGI gjennom kildene.
+    Hvordan endrer betydningen av et begrep seg over tid?
+    """
+    if not strata:
+        return {"concept": concept, "occurrences": [], "semantic_drift": []}
+    
+    occurrences = []
+    
+    for s in strata:
+        text_lower = s["text"].lower()
+        if concept.lower() in text_lower:
+            # Finn kontekst rundt begrepet (±50 ord)
+            words = s["text"].split()
+            for i, word in enumerate(words):
+                if concept.lower() in word.lower():
+                    start = max(0, i - 25)
+                    end = min(len(words), i + 25)
+                    context = " ".join(words[start:end])
+                    
+                    occurrences.append({
+                        "year": s.get("year", "unknown"),
+                        "source_ref": s["ref"],
+                        "context": context,
+                        "source_id": s["id"]
+                    })
+                    break  # Kun første forekomst per kilde
+    
+    # Beregn SEMANTISK DRIFT hvis vi har embedder
+    semantic_drift = []
+    if embedder and len(occurrences) >= 2:
+        contexts = [o["context"] for o in occurrences]
+        context_embs = embedder.encode(contexts, convert_to_tensor=True)
+        
+        for i in range(len(occurrences) - 1):
+            drift = cosine(
+                context_embs[i].cpu().numpy(),
+                context_embs[i+1].cpu().numpy()
+            )
+            
+            semantic_drift.append({
+                "from_year": occurrences[i]["year"],
+                "to_year": occurrences[i+1]["year"],
+                "drift_score": float(drift),
+                "interpretation": "STABLE" if drift < 0.2 else "SHIFTING" if drift < 0.4 else "RADICAL_CHANGE"
+            })
+    
+    return {
+        "concept": concept,
+        "total_occurrences": len(occurrences),
+        "occurrences": occurrences,
+        "semantic_drift": semantic_drift,
+        "periods_active": list(set([o["year"] for o in occurrences]))
+    }
+
+def analyze_power_knowledge_nexus(strata: list) -> dict:
+    """
+    Analyserer MAKT/KUNNSKAPS-NEKSUS i kildene.
+    - Hvem autoriserer Fisker? (sitater, referanser)
+    - Hvilke institusjoner legitimerer utsagnene?
+    - Hierarki av kildetyper
+    """
+    authority_markers = {
+        "citations": [],
+        "institutional_references": [],
+        "authority_hierarchy": {}
+    }
+    
+    # Søk etter autoritetsfigurer/institusjoner
+    authority_patterns = [
+        (r"(Le Corbusier|Asplund|Wright|Gropius|Mies)", "ARCHITECT"),
+        (r"(Akademiet|Kunstakademiet|universitet|skole)", "INSTITUTION"),
+        (r"(regering|departement|bygningsråd|boligkommission)", "STATE"),
+        (r"(tidsskrift|journal|publikation|artikel)", "PUBLICATION")
+    ]
+    
+    for s in strata:
+        for pattern, auth_type in authority_patterns:
+            matches = re.findall(pattern, s["text"], re.IGNORECASE)
+            for match in matches:
+                authority_markers["citations"].append({
+                    "entity": match if isinstance(match, str) else match[0],
+                    "type": auth_type,
+                    "source_year": s.get("year"),
+                    "source_ref": s["ref"]
+                })
+    
+    # Hierarki basert på kildetype
+    type_counts = Counter([s["type"] for s in strata])
+    authority_markers["authority_hierarchy"] = {
+        "PRIMARY": type_counts.get("PRIMARY", 0),
+        "SECONDARY": type_counts.get("SECONDARY", 0),
+        "QUOTES": type_counts.get("QUOTES", 0)
+    }
+    
+    # Identifiser dominerende diskurs
+    if type_counts.get("PRIMARY", 0) > type_counts.get("QUOTES", 0):
+        dominant = "EIGENMACHT"  # Fisker's egen autoritet
+    else:
+        dominant = "BORROWED_AUTHORITY"  # Baserer seg på andre
+    
+    return {
+        "authority_citations": authority_markers["citations"],
+        "hierarchy": authority_markers["authority_hierarchy"],
+        "dominant_discourse": dominant,
+        "total_authority_markers": len(authority_markers["citations"])
+    }
+
+# --- KOMBINERT ANALYSE (Epistemisk + Genealogisk) ---
+
 def analyze_source_relations(strata: list, response_text: str, query: str) -> dict:
-    """Forbedret genealogisk analyse med strengere vurdering"""
+    """
+    EPISTEMISK ANALYSE med strengere vurdering (fra v.9.9)
+    """
     if not embedder:
         return {}
 
@@ -437,6 +631,62 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
         }
 
     return analysis
+
+def perform_full_genealogical_analysis(strata: list, response_text: str, query: str) -> dict:
+    """
+    KOMBINERT: Epistemisk analyse + Foucauldiansk genealogisk analyse
+    """
+    print("\n🔬 Utfører fullstendig genealogisk-epistemisk analyse...")
+    
+    # EPISTEMISK ANALYSE (fra v.9.9)
+    epistemic_analysis = analyze_source_relations(strata, response_text, query)
+    
+    # GENEALOGISK ANALYSE (fra v.10.0)
+    genealogical_analysis = {
+        "discursive_shifts": detect_discursive_shifts(strata),
+        "concept_genealogies": {},
+        "power_knowledge": analyze_power_knowledge_nexus(strata),
+        "temporal_distribution": {},
+        "discontinuities": []
+    }
+    
+    # Spor ALLE genealogiske begreper som finnes i kildene
+    for concept in GENEALOGICAL_CONCEPTS:
+        if any(concept.lower() in s["text"].lower() for s in strata):
+            genealogical_analysis["concept_genealogies"][concept] = trace_concept_genealogy(strata, concept)
+    
+    # Temporal fordeling
+    years = [int(s["year"]) for s in strata if s.get("year")]
+    if years:
+        genealogical_analysis["temporal_distribution"] = {
+            "earliest": min(years),
+            "latest": max(years),
+            "span": max(years) - min(years),
+            "median": int(np.median(years)),
+            "decade_distribution": dict(Counter([y // 10 * 10 for y in years]))
+        }
+    
+    # Identifiser DISKONTINUITETER
+    if genealogical_analysis["discursive_shifts"]["shifts"]:
+        major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]
+        genealogical_analysis["discontinuities"] = [{
+            "year": shift["year_to"],
+            "description": f"Major discursive break between {shift['year_from']} and {shift['year_to']}",
+            "magnitude": shift["distance"]
+        } for shift in major_shifts]
+    
+    # KOMBINER begge analyser
+    combined = {
+        **epistemic_analysis,
+        **genealogical_analysis
+    }
+    
+    print(f"   ✅ Epistemisk nivå: {epistemic_analysis['epistemic_levels'].get('primary_level', 'N/A')}")
+    print(f"   ✅ {len(genealogical_analysis['concept_genealogies'])} begrepsgeneaologier")
+    print(f"   ✅ {len(genealogical_analysis['discursive_shifts']['shifts'])} diskursive skift")
+    print(f"   ✅ {len(genealogical_analysis['power_knowledge']['authority_citations'])} autoritetmarkører")
+    
+    return combined
 
 # --- RAG-LOGIKK ---
 def _fetch_ns(ns: str, qvec, top_k: int):
@@ -554,7 +804,7 @@ async def api_chat(req: Request):
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     
-    # HYBRID EPISTEMISK PROMPT
+    # HYBRID EPISTEMISK PROMPT (fra v.9.9)
     system_prompt = (
         "Du er arkitekten Kay Fisker (1893–1965). "
         "Du skal skille tydeligt mellem tre epistemiske niveauer:\n\n"
@@ -610,7 +860,7 @@ async def api_chat(req: Request):
     generated_text = re.sub(r"^(System:|Spørgsmål:|###).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
-    # Bygg strata MED relevante utdrag
+    # Bygg strata MED relevante utdrag (FORBEDRET fra v.9.9)
     strata = []
     for i, m in enumerate(matches):
         full_text = m["metadata"].get("text", "")
@@ -629,12 +879,18 @@ async def api_chat(req: Request):
             "score": m.get("score", 0.0)
         })
 
-    genealogy = analyze_source_relations(strata, generated_text, user_prompt)
+    # FULLSTENDIG ANALYSE (Epistemisk + Genealogisk)
+    genealogy = perform_full_genealogical_analysis(strata, generated_text, user_prompt)
     visuals = extract_visuals(generated_text)
     
+    # Bestem state basert på analyse
     epistemic_level = genealogy.get("epistemic_levels", {}).get("primary_level", "FRIKSJON")
+    has_major_shifts = len([s for s in genealogy.get("discursive_shifts", {}).get("shifts", []) if s.get("type") == "MAJOR_SHIFT"]) > 0
+    
     if visuals:
         state = "VISUEL_AKKUMULERING"
+    elif has_major_shifts:
+        state = "DISKURSIVT_BRUDD"
     elif epistemic_level == "ARKIVFAKTA":
         state = "ARKIV-DIREKTE"
     elif epistemic_level == "ARKIV-NÆR TOLKNING":
