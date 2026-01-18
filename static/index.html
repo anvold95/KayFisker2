@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Diskursmaskine v.8.9 - Glass Dashboard</title>
+    <title>Fisker / Diskursmaskine v.8.11 - Refined Glass Membrane</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -11,7 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body class="bg-[#f0f0f0] selection:bg-red-200 overflow-hidden">
+<body className="bg-[#f2f2f2] selection:bg-red-200 overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -28,6 +28,11 @@
             const [selectedSource, setSelectedSource] = useState(null);
             const [hoveredSource, setHoveredSource] = useState(null);
             
+            const [viewport, setViewport] = useState({ 
+                w: typeof window !== 'undefined' ? window.innerWidth : 1200, 
+                h: typeof window !== 'undefined' ? window.innerHeight : 800 
+            });
+
             const terminalRef = useRef(null);
 
             const rams = {
@@ -48,11 +53,16 @@
                 setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: message }].slice(-3));
             };
 
-            // Logikk for å unngå overlapping av kilder (Spatial distribution)
+            useEffect(() => {
+                const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
+                window.addEventListener('resize', onResize);
+                return () => window.removeEventListener('resize', onResize);
+            }, []);
+
             const getRandomNonOverlappingPos = (existing) => {
                 let attempts = 0;
                 while (attempts < 100) {
-                    const pos = { x: 8 + Math.random() * 75, y: 12 + Math.random() * 45 };
+                    const pos = { x: 8 + Math.random() * 75, y: 12 + Math.random() * 38 };
                     const isOverlapping = existing.some(e => {
                         const dx = Math.abs(e.pos.x - pos.x);
                         const dy = Math.abs(e.pos.y - pos.y);
@@ -61,7 +71,7 @@
                     if (!isOverlapping) return pos;
                     attempts++;
                 }
-                return { x: Math.random() * 80, y: Math.random() * 50 };
+                return { x: Math.random() * 80, y: Math.random() * 40 };
             };
 
             useEffect(() => {
@@ -71,7 +81,7 @@
             useEffect(() => {
                 if (!documentText.trim()) return;
                 const lastChar = documentText.trim().slice(-1);
-                if ([".", "\n", "?"].includes(lastChar)) {
+                if ([".", "\n", "?"].includes(lastChar) && documentText.length > 40) {
                     executeGenealogicalRAG(documentText);
                 }
             }, [documentText]);
@@ -118,46 +128,66 @@
                     <style>{`
                         body { font-family: 'Inter', sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
                         .serif { font-family: 'Libre Baskerville', serif; }
-                        textarea::placeholder { color: #ccc; }
+                        textarea::placeholder { color: #aaa; }
                         @keyframes glow-pulse { 0% { opacity: 0.15; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.15); } 100% { opacity: 0.15; transform: scale(1); } }
                         .animate-glow { animation: glow-pulse 8s ease-in-out infinite; }
-                        .glass-effect { background: rgba(255, 255, 255, 0.65); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.4); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.08); }
-                        .source-node { transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); border-radius: 4px 16px 16px 4px; }
-                        .source-node:hover { scale: 1.08; z-index: 100; background: rgba(255, 255, 255, 0.9) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.1); }
+                        
+                        /* Ekte Glassmorfisme - Den Optiske Membranen */
+                        .glass-membrane { 
+                            background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05));
+                            backdrop-filter: blur(50px) saturate(180%);
+                            -webkit-backdrop-filter: blur(50px) saturate(180%);
+                            border: 1px solid rgba(255, 255, 255, 0.3);
+                            border-top: 1px solid rgba(255, 255, 255, 0.5); /* Highlight kant */
+                            box-shadow: 
+                                0 20px 50px rgba(0, 0, 0, 0.15),
+                                inset 0 0 15px rgba(255, 255, 255, 0.1); /* Indre volum */
+                        }
+                        
+                        .source-node { 
+                            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); 
+                            border-radius: 4px 16px 16px 4px; 
+                        }
+                        .source-node:hover { 
+                            scale: 1.08; 
+                            z-index: 100; 
+                            background: rgba(255, 255, 255, 0.9) !important; 
+                            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.1); 
+                        }
                         @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
                         .scan-line { animation: scan-line 10s linear infinite; }
                     `}</style>
 
                     {/* STATUS BAR */}
-                    <header class="h-9 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/20 backdrop-blur-md">
-                        <div class="flex items-center gap-6">
-                            <div class="flex items-center gap-2">
-                                <div class="w-3 h-3 bg-[#e32219] flex items-center justify-center text-white font-black italic text-[6px]">F</div>
-                                <h1 class="text-[6px] font-extrabold uppercase tracking-[0.4em] text-black">Apparat 8.9</h1>
+                    <header className="h-9 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/20 backdrop-blur-md">
+                        <div className="flex items-center gap-6">
+                            <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 bg-[#e32219] flex items-center justify-center text-white font-black italic text-[6px]">F</div>
+                                <h1 className="text-[6px] font-extrabold uppercase tracking-[0.4em] text-black">Apparat 8.11</h1>
                             </div>
-                            <span class={`text-[6px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`}>
+                            <span className={`text-[6px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`}>
                                 {discursiveState}
                             </span>
                         </div>
-                        <div class="flex items-center gap-4">
-                            <div class="w-16 h-[1px] bg-gray-200 relative overflow-hidden">
-                                <div class="h-full bg-black transition-all duration-2000" style={{ width: `${intensity * 100}%` }}></div>
+                        <div className="flex items-center gap-4">
+                            <div className="w-16 h-[1px] bg-gray-200 relative overflow-hidden">
+                                <div className="h-full bg-black transition-all duration-2000" style={{ width: `${intensity * 100}%` }}></div>
                             </div>
-                            <span class="text-[6px] font-mono text-gray-400 uppercase tracking-widest italic">KADK RESEARCH UNIT</span>
+                            <span className="text-[6px] font-mono text-gray-400 uppercase tracking-widest italic">KADK RESEARCH UNIT</span>
                         </div>
                     </header>
 
                     {/* ARCHIVE CANVAS */}
-                    <main class={`flex-grow relative z-10 transition-colors duration-1000 ${selectedSource ? 'bg-black/5' : 'bg-transparent'}`}>
+                    <main className={`flex-grow relative z-10 transition-colors duration-1000 ${selectedSource ? 'bg-black/5' : 'bg-transparent'}`}>
                         
-                        {isSynthesizing && <div class="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-10"><div class="w-full h-1 bg-red-500 scan-line blur-[2px]"></div></div>}
+                        {isSynthesizing && <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-10"><div className="w-full h-1 bg-red-500 scan-line blur-[2px]"></div></div>}
 
                         {/* HALO GLOWS */}
-                        <div class="absolute inset-0 z-0 pointer-events-none">
+                        <div className="absolute inset-0 z-0 pointer-events-none">
                             {activeStrata.map((s, i) => (
                                 <div 
                                     key={`glow-${i}`}
-                                    class="absolute rounded-full animate-glow blur-[90px]"
+                                    className="absolute rounded-full animate-glow blur-[90px]"
                                     style={{ 
                                         left: `${s.pos.x}%`, 
                                         top: `${s.pos.y}%`, 
@@ -172,22 +202,22 @@
                         </div>
 
                         {/* CONNECTION PATHS */}
-                        <svg class="absolute inset-0 w-full h-full pointer-events-none z-10">
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
                             {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSource?.id === s.id) && (
                                 <path 
                                     key={`path-${i}`}
-                                    d={`M ${window.innerWidth / 2} ${window.innerHeight - 100} C ${window.innerWidth / 2} ${window.innerHeight / 2}, ${s.pos.x * window.innerWidth / 100} ${window.innerHeight / 2}, ${s.pos.x * window.innerWidth / 100} ${s.pos.y * window.innerHeight / 100}`}
+                                    d={`M ${viewport.w / 2} ${viewport.h - 140} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`}
                                     stroke={s.color} 
                                     strokeWidth="1.2"
                                     fill="none"
                                     strokeDasharray="4,4"
-                                    class="animate-in fade-in duration-700"
+                                    className="animate-in fade-in duration-700"
                                 />
                             ))}
                         </svg>
 
                         {/* SOURCE NODES */}
-                        <div class="absolute inset-0 z-20 pointer-events-none">
+                        <div className="absolute inset-0 z-20 pointer-events-none">
                             {activeStrata.map((s, i) => {
                                 const isFocused = selectedSource?.id === s.id;
                                 const isDimmed = selectedSource && !isFocused;
@@ -197,7 +227,7 @@
                                         onClick={() => setSelectedSource(isFocused ? null : s)}
                                         onMouseEnter={() => setHoveredSource(s.id)}
                                         onMouseLeave={() => setHoveredSource(null)}
-                                        class={`source-node absolute p-5 border-l-[3px] max-w-[280px] animate-drift pointer-events-auto cursor-pointer glass-effect ${isDimmed ? 'opacity-5 blur-sm' : 'opacity-100'} ${hoveredSource === s.id ? 'border-black' : 'border-black/5 shadow-sm'}`} 
+                                        className={`source-node absolute p-5 border-l-[3px] max-w-[280px] animate-drift pointer-events-auto cursor-pointer bg-white/40 backdrop-blur-xl border border-white/30 ${isDimmed ? 'opacity-5 blur-sm' : 'opacity-100'} ${hoveredSource === s.id ? 'border-black' : 'border-black/5 shadow-sm'}`} 
                                         style={{ 
                                             left: `${s.pos.x}%`, 
                                             top: `${s.pos.y}%`, 
@@ -206,17 +236,17 @@
                                             animationDelay: `${i * 5}s`
                                         }}
                                     >
-                                        <div class="flex justify-between items-center mb-2">
-                                            <span class="text-[6px] font-mono text-gray-400 uppercase font-black tracking-widest">{s.type}</span>
-                                            <span class="text-[6px] font-mono text-gray-300">#{s.year || 'ARKIV'}</span>
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-[6px] font-mono text-gray-400 uppercase font-black tracking-widest">{s.type}</span>
+                                            <span className="text-[6px] font-mono text-gray-300">#{s.year || 'ARKIV'}</span>
                                         </div>
-                                        <p class={`serif italic transition-all duration-500 leading-snug ${hoveredSource === s.id || isFocused ? 'text-[13px] text-black' : 'text-[10px] text-gray-400'}`}>
+                                        <p className={`serif italic transition-all duration-500 leading-snug ${hoveredSource === s.id || isFocused ? 'text-[13px] text-black' : 'text-[10px] text-gray-400'}`}>
                                             "{hoveredSource === s.id || isFocused ? s.text : s.text.substring(0, 90) + '...'}"
                                         </p>
                                         {(hoveredSource === s.id || isFocused) && (
-                                            <div class="mt-3 pt-2 border-t border-black/5 flex justify-between items-center animate-in fade-in">
-                                                <span class="text-[5px] font-bold uppercase tracking-widest text-red-500">RELATION IDENTIFICERET</span>
-                                                <span class="text-[6px] font-mono text-gray-400 italic">{s.ref}</span>
+                                            <div className="mt-3 pt-2 border-t border-black/5 flex justify-between items-center animate-in fade-in">
+                                                <span className="text-[5px] font-bold uppercase tracking-widest text-red-500">RELATION IDENTIFICERET</span>
+                                                <span className="text-[6px] font-mono text-gray-400 italic">{s.ref}</span>
                                             </div>
                                         )}
                                     </div>
@@ -225,20 +255,20 @@
                         </div>
                     </main>
 
-                    {/* FLOATING GLASS INPUT BOX */}
-                    <div class="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-lg z-50 px-4">
-                        <div class="glass-effect rounded-[1.8rem] p-6 transition-all duration-700 hover:shadow-2xl">
+                    {/* FLOATING GLASS OPERATING MEMBRANE */}
+                    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-full max-w-lg z-50 px-4">
+                        <div className="glass-membrane rounded-[2rem] p-8 transition-all duration-700 hover:shadow-2xl group">
                             
                             {/* Input Area */}
-                            <div class="relative">
-                                <div class="absolute inset-0 pointer-events-none select-none text-lg serif leading-relaxed text-transparent whitespace-pre-wrap break-words">
+                            <div className="relative">
+                                <div className="absolute inset-0 pointer-events-none select-none text-lg serif leading-relaxed text-transparent whitespace-pre-wrap break-words">
                                     {documentText.split(/(\s+)/).map((part, i) => {
                                         const clean = part.toLowerCase().replace(/[.,!?]/g, '');
                                         const color = words_map[clean];
                                         const isResonant = hoveredSource && activeStrata.find(s => s.id === hoveredSource)?.text.toLowerCase().includes(clean);
                                         
                                         return color ? (
-                                            <span key={i} class={`border-b-2 transition-all duration-500 ${isResonant ? 'bg-yellow-50 brightness-105' : 'opacity-60'}`} style={{ borderColor: color, borderStyle: isResonant ? 'solid' : 'dotted' }}>{part}</span>
+                                            <span key={i} className={`border-b-2 transition-all duration-500 ${isResonant ? 'bg-yellow-50/20 brightness-110 opacity-100' : 'opacity-40'}`} style={{ borderColor: color, borderStyle: isResonant ? 'solid' : 'dotted' }}>{part}</span>
                                         ) : <span key={i}>{part}</span>;
                                     })}
                                 </div>
@@ -247,42 +277,47 @@
                                     value={documentText} 
                                     onChange={e => setDocumentText(e.target.value)} 
                                     placeholder="Indtast arkitektonisk tese..." 
-                                    class={`w-full text-lg serif leading-relaxed text-black border-none focus:ring-0 p-0 placeholder-gray-300 resize-none bg-transparent h-[50px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
+                                    className={`w-full text-lg serif leading-relaxed text-black border-none focus:ring-0 p-0 placeholder-black/20 resize-none bg-transparent h-[50px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
                                     spellCheck="false"
                                 />
                             </div>
 
-                            {/* Response Area (Appears within the same bubble) */}
+                            {/* Response Area */}
                             {syntheticResponse && (
-                                <div class="border-t border-black/5 mt-5 pt-5 animate-in fade-in slide-in-from-bottom-2 duration-700">
-                                    <div class="flex items-center justify-center gap-3 mb-4 opacity-30">
-                                        <div class="h-[0.5px] w-8 bg-black"></div>
-                                        <span class="text-[7px] font-mono font-black text-black uppercase tracking-[0.3em]">Arkiv-Respons</span>
-                                        <div class="h-[0.5px] w-8 bg-black"></div>
+                                <div className="border-t border-white/20 mt-6 pt-6 animate-in fade-in slide-in-from-bottom-2 duration-1000">
+                                    <div className="flex items-center justify-center gap-3 mb-4 opacity-40">
+                                        <div className="h-[0.5px] w-8 bg-black"></div>
+                                        <span className="text-[7px] font-mono font-black text-black uppercase tracking-[0.3em]">Arkiv-Respons</span>
+                                        <div className="h-[0.5px] w-8 bg-black"></div>
                                     </div>
-                                    <p class="text-xl serif italic text-gray-800 leading-tight tracking-tight text-center px-2">
+                                    <p className="text-xl serif italic text-gray-900 leading-tight tracking-tight text-center px-2 drop-shadow-sm">
                                         "{syntheticResponse}"
                                     </p>
-                                    <div class="mt-5 flex justify-between items-center text-[6px] font-mono font-bold text-gray-400 uppercase tracking-widest">
-                                        <span class="flex items-center gap-2"><i data-lucide="cpu" class="w-2.5 h-2.5 text-red-500"></i> FISKER_ENGINE_8.9</span>
-                                        <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]);}} class="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full">
-                                            <i data-lucide="refresh-cw" class="w-2 h-2"></i> RENS
+                                    <div className="mt-6 flex justify-between items-center text-[6px] font-mono font-bold text-gray-500 uppercase tracking-widest">
+                                        <span className="flex items-center gap-2"><i data-lucide="cpu" className="w-2.5 h-2.5 text-red-500"></i> LORA_REFINED_8.11</span>
+                                        <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]);}} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20">
+                                            <i data-lucide="refresh-cw" className="w-2 h-2"></i> RENS
                                         </button>
                                     </div>
                                 </div>
                             )}
+                            
+                            {/* Subtil bunn-indikator */}
+                            <div className="absolute bottom-2 right-8 opacity-0 group-hover:opacity-20 transition-opacity">
+                                <i data-lucide="shield" className="w-3 h-3 text-black"></i>
+                            </div>
                         </div>
                     </div>
 
                     {/* SUBTLE LOGS IN FOOTER */}
-                    <footer class="h-6 bg-transparent flex items-center justify-between px-8 text-[6px] font-bold uppercase tracking-[0.2em] text-gray-300 fixed bottom-0 w-full z-40">
-                        <div class="flex gap-8">
-                            <span class="text-black/30 flex items-center gap-2 font-black">KADK // DISKURS_APPARAT</span>
+                    <footer className="h-6 bg-transparent flex items-center justify-between px-8 text-[6px] font-bold uppercase tracking-[0.2em] text-gray-400 fixed bottom-0 w-full z-40">
+                        <div className="flex gap-8">
+                            <span className="text-black/30 flex items-center gap-2 font-black">KADK // DISKURS_APPARAT</span>
                             {logs.slice(-1).map((log, i) => (
-                                <span key={i} class="text-black/40 animate-pulse">[{log.time}] {log.msg}</span>
+                                <span key={i} className="text-black/40 animate-pulse">[{log.time}] {log.msg}</span>
                             ))}
                         </div>
-                        <span class="opacity-10 font-mono">STABLE_BUILD_8.9.0_GLASS</span>
+                        <span className="opacity-10 font-mono tracking-tighter">STABLE_BUILD_8.11.0_MEMBRANE</span>
                     </footer>
                 </div>
             );
