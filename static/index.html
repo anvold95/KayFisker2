@@ -90,30 +90,17 @@
                 const age = 2024 - yearNum;
                 const baseDepth = 15 + Math.min((age / 100) * 60, 60);
                 
-                // KRITISK: Hele senter-området er forbudt (dekker svarboks fullstendig)
+                // Forbudt område (svarsboks)
                 const forbiddenZone = { xMin: 10, xMax: 90, yMin: 60, yMax: 100 };
-                const nodeWidth = 30;
-                const nodeHeight = 24;
-                const minDistance = 38;
                 
                 const isValidPosition = (x, y) => {
-                    // Hard reject på forbidden zone
                     if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
                         y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) return false;
-                    
-                    // Hard reject på kanter
                     if (x < 5 || x > 95 || y < 5 || y > 58) return false;
-                    
-                    // Sjekk avstand til andre noder
-                    for (const node of allNodes) {
-                        const dx = Math.abs(node.pos.x - x);
-                        const dy = Math.abs(node.pos.y - y);
-                        if (dx < minDistance && dy < (nodeHeight + 4)) return false;
-                    }
                     return true;
                 };
                 
-                // Prøv concentric circles først
+                // Prøv concentric circles
                 for (let radius = 0; radius <= 50; radius += 12) {
                     for (let i = 0; i < 24; i++) {
                         const angle = (i / 24) * 2 * Math.PI;
@@ -123,14 +110,14 @@
                     }
                 }
                 
-                // Grid search i øvre halvdel
-                for (let y = 8; y <= 55; y += 9) {
-                    for (let x = 8; x <= 92; x += 9) {
+                // Grid search
+                for (let y = 8; y <= 55; y += 10) {
+                    for (let x = 8; x <= 92; x += 10) {
                         if (isValidPosition(x, y)) return { x, y };
                     }
                 }
                 
-                // Desperat fallback - sides only
+                // Fallback - sides
                 return { x: allNodes.length % 2 === 0 ? 8 : 92, y: 20 };
             };
 
@@ -346,6 +333,64 @@
                 setSelectedConcept(null);
                 setHoveredSource(null);
             };
+
+            // FYSIKK-MOTOR: Magnet-effekt / Repulsion
+            useEffect(() => {
+                const simulationLoop = setInterval(() => {
+                    setActiveStrata(currentNodes => {
+                        if (currentNodes.length < 2) return currentNodes;
+
+                        let hasMovement = false;
+                        
+                        const nextNodes = currentNodes.map(n => ({
+                            ...n, 
+                            pos: { ...n.pos },
+                            velocity: { x: 0, y: 0 }
+                        }));
+
+                        const REPULSION_DIST = 28; // Avstand i prosent
+                        const REPULSION_STRENGTH = 0.06; // Dytt-kraft
+                        
+                        for (let i = 0; i < nextNodes.length; i++) {
+                            const nodeA = nextNodes[i];
+                            
+                            // Dragged node skal ikke påvirkes
+                            if (nodeA.id === draggedNode) continue;
+
+                            for (let j = 0; j < nextNodes.length; j++) {
+                                if (i === j) continue;
+                                const nodeB = nextNodes[j];
+
+                                // Vektet avstand (bredere bokser)
+                                const dx = (nodeA.pos.x - nodeB.pos.x) * 1.5; 
+                                const dy = nodeA.pos.y - nodeB.pos.y;
+                                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                                if (distance > 0 && distance < REPULSION_DIST) {
+                                    const force = (REPULSION_DIST - distance) / REPULSION_DIST;
+                                    const pushX = (dx / distance) * force * REPULSION_STRENGTH;
+                                    const pushY = (dy / distance) * force * REPULSION_STRENGTH;
+
+                                    nodeA.pos.x += pushX;
+                                    nodeA.pos.y += pushY;
+                                    
+                                    hasMovement = true;
+                                }
+                            }
+
+                            // Boundary constraints
+                            if (nodeA.pos.x < 5) nodeA.pos.x = 5;
+                            if (nodeA.pos.x > 95) nodeA.pos.x = 95;
+                            if (nodeA.pos.y < 5) nodeA.pos.y = 5;
+                            if (nodeA.pos.y > 58) nodeA.pos.y = 58; // Undgå svarboks
+                        }
+
+                        return hasMovement ? nextNodes : currentNodes;
+                    });
+                }, 40); // ~25 fps
+
+                return () => clearInterval(simulationLoop);
+            }, [draggedNode, activeStrata.length]);
 
             const renderDiscursiveShifts = () => {
                 if (!genealogy?.discursive_shifts?.shifts) return null;
