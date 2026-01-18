@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Diskursmaskine v.8.5 - Relationelt Apparat</title>
+    <title>Fisker / Diskursmaskine v.8.7 - Dashboard</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body class="bg-white">
+<body class="bg-[#fafafa] selection:bg-red-100 overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -27,15 +27,13 @@
             const [syntheticResponse, setSyntheticResponse] = useState("");
             const [selectedSource, setSelectedSource] = useState(null);
             const [hoveredSource, setHoveredSource] = useState(null);
-            const [archiveHistory, setArchiveHistory] = useState([]);
             
             const terminalRef = useRef(null);
 
             const rams = {
-                red: "rgba(227, 34, 25, 0.5)",
-                blue: "rgba(0, 107, 180, 0.5)",
-                orange: "rgba(255, 160, 0, 0.4)",
-                gray: "#f8f8f8",
+                red: "rgba(227, 34, 25, 0.6)",
+                blue: "rgba(0, 107, 180, 0.6)",
+                orange: "rgba(255, 160, 0, 0.5)",
                 black: "#1a1a1a"
             };
 
@@ -47,13 +45,12 @@
 
             const addLog = (msg) => {
                 const message = typeof msg === 'string' ? msg : JSON.stringify(msg);
-                setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: message }].slice(-8));
+                setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: message }].slice(-5));
             };
 
             useEffect(() => {
                 lucide.createIcons();
-                if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-            }, [logs, activeStrata, syntheticResponse, isSynthesizing, selectedSource]);
+            }, [activeStrata, syntheticResponse, isSynthesizing, selectedSource, logs]);
 
             useEffect(() => {
                 if (!documentText.trim()) return;
@@ -66,7 +63,7 @@
             const executeGenealogicalRAG = async (text) => {
                 if (isSynthesizing) return;
                 setIsSynthesizing(true);
-                addLog(`Aktiverer genealogisk blik...`);
+                addLog(`Søger i arkivets dybde...`);
 
                 try {
                     const response = await fetch('/chat', {
@@ -75,24 +72,25 @@
                         body: JSON.stringify({ message: text })
                     });
 
-                    if (!response.ok) throw new Error("Forbindelse brudt");
                     const data = await response.json();
                     
                     if (data.strata) {
                         const newStrata = data.strata.map((s, i) => ({
                             ...s,
                             id: `s-${Date.now()}-${i}`,
-                            pos: { x: 15 + (i * 20) % 70, y: 20 + (i * 25) % 60 },
+                            pos: { 
+                                x: 5 + (Math.random() * 90), 
+                                y: 10 + (Math.random() * 50) 
+                            },
                             color: s.type === "PRIMARY" ? rams.blue : s.type === "QUOTES" ? rams.orange : rams.red
                         }));
                         setActiveStrata(newStrata);
-                        setArchiveHistory(prev => [...newStrata, ...prev].slice(0, 15));
                     }
 
                     setSyntheticResponse(data.text);
                     setDiscursiveState(data.state || "FRIKSJON");
                     setIntensity(data.intensity || 0.4);
-                    addLog(`Syntese konstrueret fra ${data.strata?.length} strata.`);
+                    addLog(`Arkiv-respons genereret.`);
 
                 } catch (error) {
                     addLog(`Systemfejl: ${error.message}`);
@@ -102,296 +100,226 @@
             };
 
             return (
-                <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col antialiased overflow-hidden font-sans">
+                <div className="h-screen w-screen flex flex-col relative bg-[#fdfdfd] font-sans">
                     <style>{`
-                        body { font-family: 'Inter', sans-serif; }
+                        body { font-family: 'Inter', sans-serif; overflow: hidden; }
                         .serif { font-family: 'Libre Baskerville', serif; }
-                        textarea::placeholder { color: #eee; }
-                        .diskurs-field { transition: all 4s cubic-bezier(0.23, 1, 0.32, 1); }
+                        textarea::placeholder { color: #d1d1d1; font-style: italic; }
+                        .diskurs-field { transition: all 6s cubic-bezier(0.23, 1, 0.32, 1); }
                         @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
-                        .scan-line { animation: scan-line 5s linear infinite; }
+                        .scan-line { animation: scan-line 10s linear infinite; }
                         .scrollbar-hide::-webkit-scrollbar { display: none; }
-                        @keyframes drift { 0% { transform: translate(0, 0); } 50% { transform: translate(20px, -20px); } 100% { transform: translate(0, 0); } }
-                        .animate-drift { animation: drift 25s ease-in-out infinite; }
-                        .source-node { transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
-                        .source-node:hover { transform: translate(-50%, -50%) scale(1.15); z-index: 50; }
+                        @keyframes drift { 0% { transform: translate(0, 0); } 50% { transform: translate(40px, -30px); } 100% { transform: translate(0, 0); } }
+                        .animate-drift { animation: drift 50s ease-in-out infinite; }
+                        .source-node { transition: all 0.7s cubic-bezier(0.19, 1, 0.22, 1); }
+                        .source-node:hover { scale: 1.25; z-index: 50; }
                     `}</style>
 
-                    {/* Header */}
-                    <header class="h-14 bg-white border-b border-gray-100 flex items-center justify-between px-8 z-50 relative">
-                        <div class="flex items-center gap-8">
+                    {/* TOP BAR: SYSTEM STATUS */}
+                    <header class="h-12 bg-white/60 backdrop-blur-md border-b border-gray-100 flex items-center justify-between px-8 z-50 fixed top-0 w-full">
+                        <div class="flex items-center gap-10">
                             <div class="flex items-center gap-2">
-                                <div class="w-5 h-5 bg-[#e32219] flex items-center justify-center text-white font-bold italic text-[9px]">F</div>
-                                <h1 class="text-[9px] font-extrabold uppercase tracking-[0.3em]">Relationelt Apparat 8.5</h1>
+                                <div class="w-4 h-4 bg-[#e32219] flex items-center justify-center text-white font-bold italic text-[8px]">F</div>
+                                <h1 class="text-[8px] font-extrabold uppercase tracking-[0.4em] text-black">Diskursmaskine 8.7</h1>
                             </div>
-                            <div class="flex items-center gap-4">
-                                <span class={`text-[8px] font-bold tracking-widest ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-blue-400'}`}>
-                                    {isSynthesizing ? 'ANALYSERER KRYDSFELT...' : discursiveState}
-                                </span>
-                            </div>
+                            <div class="h-3 w-[1px] bg-gray-200"></div>
+                            <span class={`text-[7px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`}>
+                                Status: {isSynthesizing ? 'Dekonstruerer...' : discursiveState}
+                            </span>
                         </div>
-                        <div class="flex gap-10 items-center">
-                            <div class="w-32 h-[1.5px] bg-gray-100 relative overflow-hidden">
-                                <div class="h-full bg-black transition-all duration-1000" style={{ width: `${intensity * 100}%` }}></div>
+                        <div class="flex items-center gap-6">
+                            <div class="flex flex-col items-end">
+                                <span class="text-[6px] font-mono text-gray-400 uppercase font-bold tracking-widest">Genealogisk Akse Active</span>
                             </div>
-                            <span class="text-[8px] font-mono text-gray-300 uppercase tracking-widest italic">Genealogisk Dekonstruktion</span>
+                            <div class="w-20 h-[1.5px] bg-gray-100 relative overflow-hidden">
+                                <div class="h-full bg-red-500 transition-all duration-1000" style={{ width: `${intensity * 100}%` }}></div>
+                            </div>
                         </div>
                     </header>
 
-                    <div class="flex-grow relative bg-white flex overflow-hidden">
+                    {/* MAIN FIELD: ARKIVETS STRATA */}
+                    <main class="flex-grow relative z-10 overflow-hidden">
                         
-                        {/* VENSTRE: ARKIV-STRATA (Katalog over mønstre) */}
-                        <aside class="w-72 border-r border-gray-50 flex flex-col bg-gray-50/10 z-40 relative">
-                            <header class="p-5 border-b border-gray-100 bg-white/80 backdrop-blur-sm">
-                                <h3 class="text-[8px] font-extrabold uppercase tracking-widest text-gray-400 flex items-center gap-3">
-                                    <i data-lucide="database" class="w-3 h-3 text-red-500"></i> Arkiv-Katalog
-                                </h3>
-                            </header>
-                            <div class="flex-grow overflow-y-auto p-5 space-y-5 scrollbar-hide">
-                                {archiveHistory.length === 0 && (
-                                    <div class="py-20 text-center opacity-20">
-                                        <i data-lucide="search" class="w-8 h-8 mx-auto mb-4"></i>
-                                        <p class="text-[8px] uppercase font-bold tracking-widest">Afventer tese...</p>
+                        {/* SVG Forbindelser fra dashboardet og opp til kildene */}
+                        <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-20">
+                            {activeStrata.map((s, i) => (
+                                <g key={`path-${i}`}>
+                                    <path 
+                                        d={`M ${window.innerWidth / 2} ${window.innerHeight} C ${window.innerWidth / 2} ${window.innerHeight / 1.5}, ${s.pos.x * window.innerWidth / 100} ${window.innerHeight / 1.5}, ${s.pos.x * window.innerWidth / 100} ${s.pos.y * window.innerHeight / 100}`}
+                                        stroke={hoveredSource === s.id || selectedSource?.id === s.id ? s.color : "#d1d1d1"} 
+                                        strokeWidth={hoveredSource === s.id ? "1.5" : "0.5"}
+                                        fill="none"
+                                        strokeDasharray={hoveredSource === s.id ? "0" : "3,6"}
+                                        class="transition-all duration-700"
+                                    />
+                                    <circle 
+                                        cx={`${s.pos.x}%`} cy={`${s.pos.y}%`} 
+                                        r={`${15 + (intensity * 20)}%`} 
+                                        fill={s.color} fillOpacity="0.03" 
+                                        class="diskurs-field"
+                                    />
+                                </g>
+                            ))}
+                        </svg>
+
+                        {/* FLYTENDE KILDER (Store på hover) */}
+                        <div class="absolute inset-0 z-20 pointer-events-none">
+                            {activeStrata.map((s, i) => (
+                                <div 
+                                    key={s.id} 
+                                    onClick={() => setSelectedSource(s)}
+                                    onMouseEnter={() => setHoveredSource(s.id)}
+                                    onMouseLeave={() => setHoveredSource(null)}
+                                    class={`source-node absolute p-6 border-l-[3px] max-w-[320px] animate-drift pointer-events-auto cursor-pointer group bg-white/5 backdrop-blur-[1px] hover:bg-white hover:shadow-2xl ${hoveredSource === s.id ? 'border-black' : 'border-black/5'}`} 
+                                    style={{ 
+                                        left: `${s.pos.x}%`, 
+                                        top: `${s.pos.y}%`, 
+                                        transform: 'translate(-50%, -50%)',
+                                        animationDelay: `${i * 4}s`,
+                                        borderColor: hoveredSource === s.id ? s.color : 'rgba(0,0,0,0.05)'
+                                    }}
+                                >
+                                    <div class="flex justify-between items-center mb-4">
+                                        <div class="text-[7px] font-mono text-gray-400 uppercase font-black tracking-[0.2em]">{s.type}</div>
+                                        <div class="text-[7px] font-mono text-gray-300 italic">#{s.year || 'ARKIV'}</div>
                                     </div>
-                                )}
-                                {archiveHistory.map((s, i) => (
-                                    <div 
-                                        key={i} 
-                                        onClick={() => setSelectedSource(s)}
-                                        onMouseEnter={() => setHoveredSource(s.id)}
-                                        onMouseLeave={() => setHoveredSource(null)}
-                                        class={`p-4 bg-white border transition-all cursor-pointer group shadow-sm ${hoveredSource === s.id ? 'border-black -translate-y-1' : 'border-gray-100'}`}
-                                    >
-                                        <div class="flex justify-between items-start mb-2">
-                                            <span class="text-[6px] font-mono text-gray-400 uppercase font-bold tracking-widest">{s.type}</span>
-                                            <span class="text-[6px] font-mono text-gray-300">{s.year || 'N/A'}</span>
-                                        </div>
-                                        <p class="text-[10px] serif italic line-clamp-3 text-gray-500 group-hover:text-black leading-snug">"{s.text}"</p>
-                                        <div class="mt-3 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <span class="text-[7px] font-bold text-red-500">UDFORSK RELATION →</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </aside>
-
-                        {/* MIDTEN: HOVEDFELT */}
-                        <main class="flex-grow relative bg-[#fcfcfc]">
-                            {isSynthesizing && (
-                                <div class="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-30">
-                                    <div class="w-full h-1 bg-red-500 scan-line blur-[3px]"></div>
-                                </div>
-                            )}
-
-                            {/* RELATIONELLE STIER (SVG) */}
-                            <svg class="absolute inset-0 w-full h-full z-0 pointer-events-none overflow-visible">
-                                <defs>
-                                    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-                                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#eee" />
-                                    </marker>
-                                </defs>
-                                {activeStrata.map((s, i) => (
-                                    <g key={`path-${i}`}>
-                                        <line 
-                                            x1="50%" y1="50%" 
-                                            x2={`${s.pos.x}%`} y2={`${s.pos.y}%`} 
-                                            stroke={hoveredSource === s.id || selectedSource?.id === s.id ? s.color : "#f0f0f0"} 
-                                            strokeWidth={selectedSource?.id === s.id ? "1.5" : "0.5"}
-                                            strokeDasharray={selectedSource?.id === s.id ? "0" : "5,5"}
-                                            className="transition-all duration-1000"
-                                        />
-                                        <circle 
-                                            cx={`${s.pos.x}%`} cy={`${s.pos.y}%`} 
-                                            r={`${15 + (intensity * 25)}%`} 
-                                            fill={s.color} fillOpacity="0.08" 
-                                            className="diskurs-field"
-                                        />
-                                    </g>
-                                ))}
-                            </svg>
-
-                            {/* FLYTENDE FRAGMENTER (Interaktive og taktile) */}
-                            <div class="absolute inset-0 z-10 pointer-events-none">
-                                {activeStrata.map((s, i) => (
-                                    <div 
-                                        key={s.id} 
-                                        onClick={() => setSelectedSource(s)}
-                                        onMouseEnter={() => setHoveredSource(s.id)}
-                                        onMouseLeave={() => setHoveredSource(null)}
-                                        class={`source-node absolute p-6 border-l-[3px] max-w-[280px] animate-drift pointer-events-auto cursor-pointer group shadow-sm bg-white/40 backdrop-blur-[2px] ${hoveredSource === s.id ? 'bg-white shadow-2xl border-black' : 'border-black/5'}`} 
-                                        style={{ 
-                                            left: `${s.pos.x}%`, 
-                                            top: `${s.pos.y}%`, 
-                                            transform: 'translate(-50%, -50%)',
-                                            animationDelay: `${i * 1.8}s`,
-                                            borderColor: hoveredSource === s.id ? s.color : 'rgba(0,0,0,0.05)'
-                                        }}
-                                    >
-                                        <div class="flex justify-between items-center mb-3">
-                                            <div class="text-[7px] font-mono text-gray-400 uppercase font-extrabold tracking-widest">{s.type}</div>
-                                            <i data-lucide="maximize-2" class="w-2 h-2 text-gray-200 group-hover:text-black"></i>
-                                        </div>
-                                        <p class={`serif italic text-gray-600 transition-all duration-500 leading-relaxed ${hoveredSource === s.id ? 'text-[13px] text-black' : 'text-[10px] text-gray-400'}`}>
-                                            "{s.text.substring(0, 140)}..."
-                                        </p>
-                                        <div class="mt-3 text-[7px] font-mono text-gray-300 group-hover:text-gray-500 transition-colors uppercase tracking-tighter">Ref: {s.ref}</div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {/* SKRIVEFLATE & GENEALOGISK KOMMENTAR */}
-                            <div class="absolute inset-0 flex flex-col items-center justify-start pt-24 z-20 pointer-events-none">
-                                <div class="max-w-xl w-full flex flex-col gap-16 pointer-events-auto">
-                                    
-                                    <div class="relative bg-white/50 p-8 border border-transparent hover:border-gray-100 transition-all group">
-                                        <div class="absolute inset-0 pointer-events-none select-none p-8 text-2xl serif leading-relaxed text-transparent whitespace-pre-wrap break-words">
-                                            {documentText.split(/(\s+)/).map((part, i) => {
-                                                const clean = part.toLowerCase().replace(/[.,!?]/g, '');
-                                                const color = words_map[clean];
-                                                return color ? (
-                                                    <span key={i} class="border-b-2 border-dotted" style={{ borderColor: color }}>{part}</span>
-                                                ) : <span key={i}>{part}</span>;
-                                            })}
-                                        </div>
-
-                                        <textarea 
-                                            value={documentText} 
-                                            onChange={e => setDocumentText(e.target.value)} 
-                                            placeholder="Indtast din påstand eller tese her..." 
-                                            class={`w-full text-2xl serif leading-relaxed text-[#1a1a1a] border-none focus:ring-0 p-0 placeholder-gray-200 resize-none bg-transparent h-[200px] transition-all duration-1000 ${isSynthesizing ? 'opacity-20 blur-[1px]' : 'opacity-100'}`}
-                                            spellCheck="false"
-                                        />
-                                        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-30 text-[8px] font-mono uppercase tracking-[0.3em]">Redigeringsflade</div>
-                                    </div>
-
-                                    {/* GENEALOGISK KOMMENTAR (Fisker svarer) */}
-                                    {syntheticResponse && (
-                                        <div class="bg-white border-y border-gray-100 py-16 px-4 animate-in fade-in slide-in-from-bottom-10 duration-1000 relative">
-                                            <div class="flex items-center gap-6 mb-10 opacity-30">
-                                                <div class="h-[1px] flex-grow bg-black"></div>
-                                                <span class="text-[9px] font-mono font-black text-black uppercase tracking-[0.5em]">Genealogisk_Kommentar</span>
-                                                <div class="h-[1px] flex-grow bg-black"></div>
-                                            </div>
-                                            <p class="text-3xl md:text-5xl serif italic text-black leading-[1.05] tracking-tight text-center px-6">
-                                                "{syntheticResponse}"
-                                            </p>
-                                            <div class="mt-12 flex justify-between items-center text-[8px] font-mono font-bold text-gray-400 uppercase tracking-widest px-10">
-                                                <div class="flex items-center gap-4">
-                                                    <i data-lucide="cpu" class="w-4 h-4 text-red-500 animate-pulse"></i> 
-                                                    <span>LoRA_FISKER_ANALYSIS</span>
-                                                </div>
-                                                <div class="flex items-center gap-2">
-                                                    <i data-lucide="git-branch" class="w-3 h-3"></i> 
-                                                    DISKURSIV FORBINDELSE: AKTIV
-                                                </div>
-                                            </div>
+                                    <p class={`serif italic transition-all duration-500 leading-relaxed ${hoveredSource === s.id ? 'text-[15px] text-black' : 'text-[11px] text-gray-400'}`}>
+                                        "{hoveredSource === s.id ? s.text.substring(0, 300) : s.text.substring(0, 120)}..."
+                                    </p>
+                                    {hoveredSource === s.id && (
+                                        <div class="mt-6 pt-4 border-t border-gray-50 flex justify-between items-center animate-in fade-in duration-500">
+                                            <span class="text-[7px] font-bold text-red-500 uppercase tracking-widest">Klik for dypanalyse →</span>
+                                            <span class="text-[7px] font-mono text-gray-300 uppercase italic">Referens: {s.ref}</span>
                                         </div>
                                     )}
                                 </div>
-                            </div>
-                        </main>
+                            ))}
+                        </div>
+                    </main>
 
-                        {/* HØYRE: MONITOR (Epistemisk monitor) */}
-                        <aside class="w-64 border-l border-gray-50 flex flex-col bg-white z-40 relative">
-                            <header class="p-5 border-b border-gray-100">
-                                <h3 class="text-[8px] font-extrabold uppercase tracking-widest text-gray-400 flex items-center gap-3">
-                                    <i data-lucide="activity" class="w-3 h-3 text-red-500"></i> Epistemisk Monitor
-                                </h3>
-                            </header>
-                            <div ref={terminalRef} class="flex-grow p-6 font-mono text-[9px] text-gray-400 space-y-3 overflow-y-auto scrollbar-hide">
+                    {/* BOTTOM DASHBOARD: INPUT & RESPONSAREA */}
+                    <div class="fixed bottom-0 left-0 w-full z-40 flex flex-col items-center">
+                        
+                        {/* Monitor-logg som flyter rett over dashboardet */}
+                        <div class="w-full max-w-2xl px-10 mb-2 opacity-40 hover:opacity-100 transition-opacity">
+                            <div class="bg-white/90 backdrop-blur-sm p-3 border border-gray-100 text-[7px] font-mono text-gray-400 flex gap-6 justify-center uppercase tracking-widest">
                                 {logs.map((log, i) => (
-                                    <div key={i} class="flex flex-col gap-1 border-b border-gray-50 pb-2">
-                                        <span class="opacity-20 text-[7px]">[{log.time}]</span>
-                                        <span class={i === logs.length - 1 ? "text-black font-bold" : ""}>{log.msg}</span>
-                                    </div>
+                                    <span key={i} class={i === logs.length - 1 ? "text-black font-black" : ""}>
+                                        [{log.time}] {log.msg}
+                                    </span>
                                 ))}
                             </div>
-                            <div class="p-6 border-t border-gray-50 bg-gray-50/30">
-                                <div class="text-[7px] font-mono text-gray-400 uppercase mb-2 tracking-widest font-black">Vektor-Rum: 1024-D</div>
-                                <div class="h-1 w-full bg-gray-100 rounded-full overflow-hidden">
-                                    <div class="h-full bg-red-500 transition-all duration-[3000ms]" style={{ width: `${intensity * 100}%` }}></div>
+                        </div>
+
+                        {/* Det fysiske skrivefeltet i bunnen */}
+                        <section class="w-full bg-white border-t border-gray-100 shadow-[0_-20px_50px_rgba(0,0,0,0.03)] p-10 pb-12 flex flex-col items-center">
+                            <div class="w-full max-w-2xl relative">
+                                
+                                {/* Overlay for fargemarkeringer i teksten */}
+                                <div class="absolute inset-0 pointer-events-none select-none text-2xl serif leading-relaxed text-transparent whitespace-pre-wrap break-words">
+                                    {documentText.split(/(\s+)/).map((part, i) => {
+                                        const clean = part.toLowerCase().replace(/[.,!?]/g, '');
+                                        const color = words_map[clean];
+                                        return color ? (
+                                            <span key={i} class="border-b-2 border-dotted opacity-70" style={{ borderColor: color }}>{part}</span>
+                                        ) : <span key={i}>{part}</span>;
+                                    })}
                                 </div>
-                            </div>
-                        </aside>
 
-                        {/* KILDE-EKSPLORER (Dypdykk og sammenheng) */}
-                        {selectedSource && (
-                            <div class="absolute inset-0 bg-white/70 backdrop-blur-xl z-[100] flex justify-end animate-in fade-in duration-500">
-                                <div class="w-full max-w-2xl h-full bg-white border-l border-gray-100 shadow-2xl flex flex-col animate-in slide-in-from-right duration-700">
-                                    <div class="p-10 border-b border-gray-100 flex justify-between items-center bg-gray-50/20">
-                                        <div class="flex flex-col">
-                                            <span class="text-[10px] font-black uppercase text-red-500 tracking-[0.3em]">Dybdeanalyse</span>
-                                            <h2 class="text-lg font-bold uppercase tracking-widest mt-1 serif italic">{selectedSource.type} / {selectedSource.year || 'ARKIVET'}</h2>
+                                <textarea 
+                                    value={documentText} 
+                                    onChange={e => setDocumentText(e.target.value)} 
+                                    placeholder="Indtast din arkitektoniske tese her..." 
+                                    class={`w-full text-2xl serif leading-relaxed text-black border-none focus:ring-0 p-0 placeholder-gray-100 resize-none bg-transparent h-[120px] transition-all duration-700 ${isSynthesizing ? 'opacity-20 blur-[1px]' : 'opacity-100'}`}
+                                    spellCheck="false"
+                                />
+
+                                {syntheticResponse && (
+                                    <div class="mt-10 pt-10 border-t border-gray-50 animate-in fade-in slide-in-from-bottom-4 duration-1000">
+                                        <div class="flex items-center gap-4 mb-6 opacity-20">
+                                            <span class="text-[8px] font-mono font-black text-black uppercase tracking-[0.4em]">Kay Fisker: Kommentar</span>
+                                            <div class="h-[0.5px] flex-grow bg-black"></div>
                                         </div>
-                                        <button onClick={() => setSelectedSource(null)} class="w-12 h-12 border border-gray-100 flex items-center justify-center hover:bg-black hover:text-white transition-all shadow-sm">
-                                            <i data-lucide="x" class="w-5 h-5"></i>
-                                        </button>
-                                    </div>
-                                    
-                                    <div class="flex-grow overflow-y-auto p-12 space-y-20">
-                                        <section class="space-y-10">
-                                            <div class="flex items-center gap-4 text-[9px] font-black uppercase text-gray-400 tracking-[0.4em]">
-                                                <div class="w-10 h-[1px] bg-gray-200"></div> Arkivfragment
-                                            </div>
-                                            <p class="text-3xl md:text-4xl serif italic leading-tight text-gray-900 border-l-4 border-red-500 pl-12 py-4">
-                                                "{selectedSource.text}"
-                                            </p>
-                                            <div class="flex items-center gap-4 p-6 bg-gray-50 border border-gray-100">
-                                                <i data-lucide="info" class="w-4 h-4 text-gray-400"></i>
-                                                <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest">KILDE: {selectedSource.ref}</p>
-                                            </div>
-                                        </section>
-
-                                        <section class="space-y-12 border-t border-gray-100 pt-20">
-                                            <div class="flex items-center gap-4 text-[9px] font-black uppercase text-blue-500 tracking-[0.4em]">
-                                                <div class="w-10 h-[1px] bg-blue-100"></div> Genealogisk Relation
-                                            </div>
-                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-16">
-                                                <div class="space-y-6">
-                                                    <span class="text-[8px] font-black uppercase text-gray-300 tracking-[0.2em] block">Historisk Brud</span>
-                                                    <p class="text-[12px] serif text-gray-600 leading-relaxed italic border-l-2 border-gray-100 pl-6">
-                                                        Dette stratum repræsenterer et skift i arkitekturens logik, hvor Fisker fjerner det dekorative element til fordel for en 'disciplineret' rumlighed.
-                                                    </p>
-                                                </div>
-                                                <div class="space-y-6">
-                                                    <span class="text-[8px] font-black uppercase text-gray-300 tracking-[0.2em] block">Relation til Tese</span>
-                                                    <p class="text-[12px] serif text-gray-600 leading-relaxed italic border-l-2 border-gray-100 pl-6">
-                                                        Fragmentet yder modstand mod din tese om '{documentText.substring(0, 30)}...' ved at betone de kollektive fremfor de individuelle behov.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        </section>
-                                        
-                                        <section class="p-10 bg-red-50/30 border border-red-100 italic text-[11px] serif text-red-900 leading-loose">
-                                            "Det genealogiske blik søger ikke at finde sandheden i arkivet, men at blotlægge de magtstrukturer og forvridninger, der har formet vores samtale om boligen."
-                                        </section>
-                                    </div>
-
-                                    <div class="p-10 border-t border-gray-100 bg-white flex justify-between items-center">
-                                        <div class="flex flex-col gap-1">
-                                            <span class="text-[8px] font-mono text-gray-300 uppercase tracking-widest">Status: Deep Read Active</span>
-                                            <span class="text-[8px] font-mono text-gray-300 uppercase tracking-widest">Module: v.8.5_RELATIONAL</span>
+                                        <p class="text-3xl serif italic text-black leading-tight tracking-tight text-center">
+                                            "{syntheticResponse}"
+                                        </p>
+                                        <div class="mt-8 flex justify-center items-center gap-10 text-[7px] font-mono font-bold text-gray-300 uppercase tracking-widest">
+                                            <span class="flex items-center gap-2"><i data-lucide="cpu" class="w-3 h-3 text-red-500"></i> LoRA_v8.7_ACTIVE</span>
+                                            <span class="flex items-center gap-2 italic"><i data-lucide="git-branch" class="w-3 h-3"></i> Genealogisk Relation Etableret</span>
                                         </div>
-                                        <button class="bg-[#1a1a1a] text-white text-[10px] font-bold uppercase px-10 py-5 tracking-[0.2em] hover:bg-red-600 transition-all flex items-center gap-4 shadow-xl">
-                                            Eksportér Stratum <i data-lucide="arrow-right" class="w-4 h-4"></i>
-                                        </button>
                                     </div>
-                                </div>
+                                )}
                             </div>
-                        )}
+                        </section>
                     </div>
 
-                    <footer class="h-10 bg-white border-t border-gray-100 flex items-center justify-between px-8 text-[8px] font-bold uppercase tracking-[0.2em] text-gray-400 italic relative z-50">
-                        <div class="flex gap-10">
-                            <span class="flex items-center gap-3 text-black"><div class="w-1.5 h-1.5 bg-[#e32219]"></div> KADK / Research Unit</span>
-                            <span class="hidden md:block">Metode: Relationel Genealogi // Live</span>
+                    {/* DYBDEANALYSE LAYER (Dyk ned i kildene - Samme funksjonalitet som før) */}
+                    {selectedSource && (
+                        <div class="fixed inset-0 bg-white/80 backdrop-blur-2xl z-[100] flex justify-center items-center animate-in fade-in duration-500 p-16">
+                            <div class="w-full max-w-4xl h-full bg-white border border-gray-100 shadow-2xl flex flex-col animate-in zoom-in-95 duration-500">
+                                <div class="p-10 border-b border-gray-100 flex justify-between items-center bg-gray-50/30">
+                                    <div class="flex flex-col">
+                                        <span class="text-[10px] font-black uppercase text-red-500 tracking-[0.4em]">Genealogisk Dybdelæsning</span>
+                                        <h2 class="text-xl font-bold uppercase tracking-widest mt-2 serif italic text-black">{selectedSource.type} // {selectedSource.year || 'KADK ARKIV'}</h2>
+                                    </div>
+                                    <button onClick={() => setSelectedSource(null)} class="w-10 h-10 border border-gray-100 flex items-center justify-center hover:bg-black hover:text-white transition-all">
+                                        <i data-lucide="x" class="w-5 h-5"></i>
+                                    </button>
+                                </div>
+                                
+                                <div class="flex-grow overflow-y-auto p-16 space-y-24">
+                                    <section class="space-y-12">
+                                        <div class="flex items-center gap-4 text-[9px] font-black uppercase text-gray-300 tracking-[0.5em]">
+                                            <div class="w-12 h-[1px] bg-gray-200"></div> Arkivfragment
+                                        </div>
+                                        <p class="text-4xl serif italic leading-[1.1] text-black border-l-4 border-red-500 pl-16 py-4">
+                                            "{selectedSource.text}"
+                                        </p>
+                                        <div class="p-8 bg-gray-50/50 border border-gray-100">
+                                            <p class="text-[11px] font-mono text-gray-400 uppercase tracking-widest font-bold">Kilde: {selectedSource.ref}</p>
+                                        </div>
+                                    </section>
+
+                                    <section class="space-y-12 border-t border-gray-50 pt-20">
+                                        <div class="flex items-center gap-4 text-[9px] font-black uppercase text-blue-500 tracking-[0.5em]">
+                                            <div class="w-12 h-[1px] bg-blue-100"></div> Diskursiv Betydning
+                                        </div>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-20">
+                                            <div class="space-y-4">
+                                                <span class="text-[8px] font-black uppercase text-gray-300 tracking-widest block">Historisk Kontekst</span>
+                                                <p class="text-[13px] serif text-gray-600 leading-relaxed italic">
+                                                    Dette fragment afslører hvordan arkitekturen bliver et redskab for social disiplin i efterkrigstidens Danmark.
+                                                </p>
+                                            </div>
+                                            <div class="space-y-4">
+                                                <span class="text-[8px] font-black uppercase text-gray-300 tracking-widest block">Relation til din Tese</span>
+                                                <p class="text-[13px] serif text-gray-600 leading-relaxed italic">
+                                                    Det understøtter din antagelse om arkitekturens maktstrukturer ved at vise hvordan formen dikterer adfærd.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </section>
+                                </div>
+
+                                <div class="p-10 border-t border-gray-100 flex justify-between items-center">
+                                    <span class="text-[8px] font-mono text-gray-300 uppercase tracking-widest">Module: v.8.7_DASHBOARD_ENGINE</span>
+                                    <button class="bg-black text-white text-[10px] font-bold uppercase px-12 py-5 tracking-[0.3em] hover:bg-red-600 transition-all flex items-center gap-4">
+                                        Eksportér Data <i data-lucide="download" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
+                    )}
+
+                    {/* FOOTER */}
+                    <footer class="h-10 bg-white border-t border-gray-50 flex items-center justify-between px-8 text-[8px] font-bold uppercase tracking-[0.3em] text-gray-400 italic fixed bottom-0 w-full z-50">
                         <div class="flex gap-10">
-                            <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]); setArchiveHistory([]); addLog("System nulstillet.");}} class="hover:text-black transition-all flex items-center gap-2 underline underline-offset-4 decoration-gray-100">
-                                <i data-lucide="refresh-cw" class="w-2 h-2"></i> Nulstil Apparat
-                            </button>
-                            <span class="opacity-20 tracking-tighter">v.8.5.0_RELATIONAL</span>
+                            <span class="flex items-center gap-3 text-black font-black uppercase tracking-widest"><div class="w-1.5 h-1.5 bg-[#e32219]"></div> KADK / Research Unit</span>
+                            <span class="hidden md:block">Metode: Relationel Genealogi</span>
                         </div>
+                        <button onClick={() => {setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]); addLog("System nulstillet.");}} class="hover:text-black transition-all flex items-center gap-2 underline underline-offset-4 decoration-gray-100">
+                            <i data-lucide="refresh-cw" class="w-2 h-2"></i> Nulstil Apparat
+                        </button>
                     </footer>
                 </div>
             );
