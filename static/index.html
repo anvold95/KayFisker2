@@ -89,77 +89,91 @@
                 return () => window.removeEventListener('resize', onResize);
             }, []);
 
-            // FORBEDRET GRID-BASERT KOLLISJONSKONTROLL
+            // FORBEDRET KOLLISJONSKONTROLL MED FAKTISK AVSTANDSSJEKK
             const getSmartPosition = (year, existingNodes = []) => {
                 const allNodes = [...activeStrata, ...visualNodes, ...existingNodes];
                 const yearNum = parseInt(year) || 1950;
                 const age = 2024 - yearNum;
                 const baseDepth = 10 + Math.min((age / 100) * 70, 70);
                 
-                // Grid-system for collision detection
-                const gridSize = 25; // Percentage units
-                const occupiedCells = new Set();
-                
-                // Mark occupied cells
-                allNodes.forEach(node => {
-                    const cellX = Math.floor(node.pos.x / gridSize);
-                    const cellY = Math.floor(node.pos.y / gridSize);
-                    occupiedCells.add(`${cellX},${cellY}`);
-                });
-                
                 // Define forbidden zone (chatbox area at bottom center)
                 const forbiddenZone = {
-                    xMin: 25, xMax: 75,
-                    yMin: 65, yMax: 95
+                    xMin: 20, xMax: 80,
+                    yMin: 60, yMax: 95
                 };
                 
-                // Try positions in order of preference
-                const candidates = [];
+                const minDistance = 18; // Minimum % distance between nodes
                 
-                // Generate candidates around the base depth
-                for (let yOffset = -15; yOffset <= 15; yOffset += 5) {
-                    for (let xOffset = 0; xOffset < 100; xOffset += gridSize) {
-                        const x = xOffset + Math.random() * (gridSize - 2);
-                        const y = Math.max(10, Math.min(85, baseDepth + yOffset));
-                        
-                        // Skip forbidden zone
-                        if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
-                            y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) {
-                            continue;
-                        }
-                        
-                        const cellX = Math.floor(x / gridSize);
-                        const cellY = Math.floor(y / gridSize);
-                        const cellKey = `${cellX},${cellY}`;
-                        
-                        if (!occupiedCells.has(cellKey)) {
-                            candidates.push({ x, y, cellKey });
-                        }
-                    }
-                }
-                
-                // If we found free positions, use the first one
-                if (candidates.length > 0) {
-                    const chosen = candidates[0];
-                    occupiedCells.add(chosen.cellKey);
-                    return { x: chosen.x, y: chosen.y };
-                }
-                
-                // Fallback: find any position outside forbidden zone
-                for (let attempt = 0; attempt < 100; attempt++) {
-                    const x = Math.random() * 100;
-                    const y = Math.random() * 60 + 10; // Top 70% of screen
-                    
+                const isPositionValid = (x, y) => {
+                    // Check forbidden zone
                     if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
                         y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) {
-                        continue;
+                        return false;
                     }
                     
-                    return { x, y };
+                    // Check distance to all existing nodes
+                    for (const node of allNodes) {
+                        const dx = Math.abs(node.pos.x - x);
+                        const dy = Math.abs(node.pos.y - y);
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < minDistance) {
+                            return false;
+                        }
+                    }
+                    
+                    return true;
+                };
+                
+                // Try positions in a spiral pattern around base depth
+                const attempts = [];
+                
+                // Generate candidates in expanding circles
+                for (let radius = 0; radius < 40; radius += 8) {
+                    for (let angle = 0; angle < 360; angle += 30) {
+                        const rad = (angle * Math.PI) / 180;
+                        const x = 50 + radius * Math.cos(rad);
+                        const y = baseDepth + radius * Math.sin(rad);
+                        
+                        if (x >= 5 && x <= 95 && y >= 5 && y <= 85) {
+                            attempts.push({ x, y });
+                        }
+                    }
                 }
                 
-                // Last resort
-                return { x: 10, y: baseDepth };
+                // Try each candidate position
+                for (const pos of attempts) {
+                    if (isPositionValid(pos.x, pos.y)) {
+                        return { x: pos.x, y: pos.y };
+                    }
+                }
+                
+                // Fallback: random positions with validation
+                for (let attempt = 0; attempt < 200; attempt++) {
+                    const x = 5 + Math.random() * 90;
+                    const y = 10 + Math.random() * 50;
+                    
+                    if (isPositionValid(x, y)) {
+                        return { x, y };
+                    }
+                }
+                
+                // Last resort: edge positions
+                const edgePositions = [
+                    { x: 10, y: 15 },
+                    { x: 90, y: 15 },
+                    { x: 10, y: 45 },
+                    { x: 90, y: 45 }
+                ];
+                
+                for (const pos of edgePositions) {
+                    if (isPositionValid(pos.x, pos.y)) {
+                        return pos;
+                    }
+                }
+                
+                // Absolute fallback
+                return { x: 10 + (allNodes.length * 15) % 80, y: 15 + (allNodes.length * 10) % 40 };
             };
 
             const executeGenealogicalRAG = async (text) => {
@@ -647,11 +661,19 @@
                                         <span className="flex items-center gap-2">
                                             <LucideIcon name="cpu" size={12} className="text-blue-500" /> LORA_GENEALOGICAL_9.8
                                         </span>
-                                        <button 
-                                            onClick={resetAll} 
-                                            className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20">
-                                            <LucideIcon name="refresh-cw" size={12} /> RENS
-                                        </button>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => executeGenealogicalRAG(documentText)} 
+                                                disabled={isSynthesizing}
+                                                className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20 disabled:opacity-30">
+                                                <LucideIcon name="rotate-cw" size={12} /> PRØV IGEN
+                                            </button>
+                                            <button 
+                                                onClick={resetAll} 
+                                                className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20">
+                                                <LucideIcon name="refresh-cw" size={12} /> RENS
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
