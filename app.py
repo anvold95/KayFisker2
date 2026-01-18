@@ -602,7 +602,11 @@ async def api_chat(req: Request):
         "- Opfinnelse av konkrete årstal, adresser eller fakta som ikke finnes i kildene\n"
         "- Umarkerte generaliseringer presentert som fakta\n\n"
         
-        "Hold svarene korte (max 2-3 setninger) og i et nøgternt fagsprog."
+        "SVARLÆNGDE:\n"
+        "- For simple fakta: 2-3 setninger\n"
+        "- For teoretiske spørgsmål: 4-6 setninger med konkrete eksempler fra bygninger\n"
+        "- Svar ALTID fullt ut. Undgå afbrydelser midt i en tanke.\n"
+        "Hold tone nøgtern og faglig."
     )
     
     if bio_context:
@@ -619,10 +623,10 @@ async def api_chat(req: Request):
     
     result = pipe(
         full_prompt,
-        max_new_tokens=200,  # Increased slightly for nuanced responses
-        temperature=0.25,  # Slight increase for less rigid outputs
-        top_p=0.92,
-        repetition_penalty=1.12,
+        max_new_tokens=350,  # Increased from 200 for fuller responses
+        temperature=0.3,  # Slightly higher for more variation
+        top_p=0.93,
+        repetition_penalty=1.10,
         do_sample=True
     )
     
@@ -648,11 +652,41 @@ async def api_chat(req: Request):
             "ref": f"{m['metadata'].get('author', 'Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
             "year": m["metadata"].get("year"),
             "type": m["metadata"].get("__ns", "primary").upper(),
-            "score": m.get("score", 0.0)  # Add similarity score
+            "score": m.get("score", 0.0)
         })
 
     # Analyser med forbedret genealogi
     genealogy = analyze_source_relations(strata, generated_text, user_prompt)
+    
+    # FILTER: Kun vis kilder som faktisk ble brukt eller er høyt relevante
+    used_source_refs = set()
+    if genealogy and genealogy.get("source_attributions"):
+        for attr in genealogy["source_attributions"]:
+            # Kun inkluder kilder med betydelig attribution
+            if attr.get("attribution_strength", 0) > 0.35:
+                used_source_refs.add(attr["source_ref"])
+    
+    # Filtrer strata til kun brukte kilder + topp 2 høyeste relevans
+    filtered_strata = []
+    backup_strata = []
+    
+    for s in strata:
+        if s["ref"] in used_source_refs:
+            filtered_strata.append(s)
+        else:
+            backup_strata.append(s)
+    
+    # Sorter backup etter excerpt_relevance
+    backup_strata.sort(key=lambda x: x.get("excerpt_relevance", 0), reverse=True)
+    
+    # Legg til maks 2 ekstra høyrelevante kilder hvis vi har < 3 brukte
+    if len(filtered_strata) < 3:
+        needed = min(2, len(backup_strata))
+        filtered_strata.extend(backup_strata[:needed])
+    
+    # Begrens totalt til 5 kilder
+    final_strata = filtered_strata[:5]
+    
     visuals = extract_visuals(generated_text)
     
     # Determine state based on epistemic level
@@ -668,10 +702,10 @@ async def api_chat(req: Request):
     
     return {
         "text": generated_text,
-        "strata": strata,
+        "strata": final_strata,  # Kun relevante kilder
         "visuals": visuals,
         "state": state,
-        "intensity": min(len(strata)/6, 1.0),
+        "intensity": min(len(final_strata)/5, 1.0),
         "genealogy": genealogy
     }
 
