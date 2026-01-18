@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Diskursmaskine v.9.7 - Hybrid Archive</title>
+    <title>Fisker / Diskursmaskine v.9.8 - Hybrid Archive</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -28,7 +28,6 @@
             const [isSynthesizing, setIsSynthesizing] = useState(false);
             const [syntheticResponse, setSyntheticResponse] = useState("");
             
-            // Array for multi-seleksjon
             const [selectedSources, setSelectedSources] = useState([]); 
             const [hoveredSource, setHoveredSource] = useState(null);
             const [genealogy, setGenealogy] = useState(null);
@@ -63,35 +62,77 @@
                 return () => window.removeEventListener('resize', onResize);
             }, []);
 
-            // FORBEDRET KOLLISJONSKONTROLL MED NO-FLY ZONE
+            // FORBEDRET GRID-BASERT KOLLISJONSKONTROLL
             const getSmartPosition = (year, existingNodes = []) => {
                 const allNodes = [...activeStrata, ...visualNodes, ...existingNodes];
                 const yearNum = parseInt(year) || 1950;
                 const age = 2024 - yearNum;
-                const baseDepth = 10 + Math.min((age / 100) * 70, 70); 
+                const baseDepth = 10 + Math.min((age / 100) * 70, 70);
                 
-                let attempts = 0;
-                while (attempts < 200) {
-                    const x = 5 + Math.random() * 90;
-                    const y = Math.max(10, Math.min(85, baseDepth + (Math.random() * 30 - 15)));
-                    
-                    // FORBUDSONE: Chatbox (Bunn Senter)
-                    if (y > 65 && x > 25 && x < 75) { 
-                        attempts++; 
-                        continue; 
-                    } 
-
-                    // Sjekk mot eksisterende noder
-                    const collision = allNodes.some(node => {
-                        const dx = Math.abs(node.pos.x - x);
-                        const dy = Math.abs(node.pos.y - y);
-                        return dx < 22 && dy < 18; 
-                    });
-
-                    if (!collision) return { x, y };
-                    attempts++;
+                // Grid-system for collision detection
+                const gridSize = 25; // Percentage units
+                const occupiedCells = new Set();
+                
+                // Mark occupied cells
+                allNodes.forEach(node => {
+                    const cellX = Math.floor(node.pos.x / gridSize);
+                    const cellY = Math.floor(node.pos.y / gridSize);
+                    occupiedCells.add(`${cellX},${cellY}`);
+                });
+                
+                // Define forbidden zone (chatbox area at bottom center)
+                const forbiddenZone = {
+                    xMin: 25, xMax: 75,
+                    yMin: 65, yMax: 95
+                };
+                
+                // Try positions in order of preference
+                const candidates = [];
+                
+                // Generate candidates around the base depth
+                for (let yOffset = -15; yOffset <= 15; yOffset += 5) {
+                    for (let xOffset = 0; xOffset < 100; xOffset += gridSize) {
+                        const x = xOffset + Math.random() * (gridSize - 2);
+                        const y = Math.max(10, Math.min(85, baseDepth + yOffset));
+                        
+                        // Skip forbidden zone
+                        if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
+                            y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) {
+                            continue;
+                        }
+                        
+                        const cellX = Math.floor(x / gridSize);
+                        const cellY = Math.floor(y / gridSize);
+                        const cellKey = `${cellX},${cellY}`;
+                        
+                        if (!occupiedCells.has(cellKey)) {
+                            candidates.push({ x, y, cellKey });
+                        }
+                    }
                 }
-                return { x: attempts % 2 === 0 ? 5 : 95, y: baseDepth }; 
+                
+                // If we found free positions, use the first one
+                if (candidates.length > 0) {
+                    const chosen = candidates[0];
+                    occupiedCells.add(chosen.cellKey);
+                    return { x: chosen.x, y: chosen.y };
+                }
+                
+                // Fallback: find any position outside forbidden zone
+                for (let attempt = 0; attempt < 100; attempt++) {
+                    const x = Math.random() * 100;
+                    const y = Math.random() * 60 + 10; // Top 70% of screen
+                    
+                    if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
+                        y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) {
+                        continue;
+                    }
+                    
+                    return { x, y };
+                }
+                
+                // Last resort
+                return { x: 10, y: baseDepth };
             };
 
             useEffect(() => {
@@ -119,13 +160,14 @@
                     if (!response.ok) {
                         const err = await response.json();
                         addLog(err.error || "Fejl i forespørgsel");
+                        setSyntheticResponse(err.text || "Kunne ikke hente svar fra arkivet.");
                         return;
                     }
                     
                     const data = await response.json();
                     
                     const newStrata = [];
-                    if (data.strata) {
+                    if (data.strata && Array.isArray(data.strata)) {
                         data.strata.forEach((s, i) => {
                             newStrata.push({
                                 ...s,
@@ -139,7 +181,7 @@
                     setDetectedVisuals(data.visuals || []);
                     setVisualNodes([]);
 
-                    setSyntheticResponse(data.text);
+                    setSyntheticResponse(data.text || "Ingen respons generert.");
                     setDiscursiveState(data.state || "FRIKSJON");
                     setIntensity(data.intensity || 0.4);
                     setGenealogy(data.genealogy || null);
@@ -147,6 +189,7 @@
                     addLog(`Respons etableret.`);
                 } catch (error) {
                     addLog(`Forbindelsesfejl: ${error.message}`);
+                    setSyntheticResponse("Systemfejl. Sjekk backend.");
                 } finally {
                     setIsSynthesizing(false);
                 }
@@ -166,7 +209,7 @@
             };
 
             const renderResponseWithVisuals = (text) => {
-                if (!detectedVisuals.length) return text;
+                if (!detectedVisuals || !detectedVisuals.length) return text;
                 const patterns = detectedVisuals.map(v => v.keyword).join("|");
                 const regex = new RegExp(`(${patterns})`, "gi");
                 const parts = text.split(regex);
@@ -205,37 +248,53 @@
 
             const closeSidebar = () => {
                 setSelectedSources([]); 
+                setHoveredSource(null);
             };
 
             const getHighlightedText = (fullText, response, sourceRef) => {
-                if (!response) return <span>{fullText}</span>;
+                if (!response || !fullText) return <span className="opacity-70">{fullText}</span>;
                 
                 let attributedSegments = [];
                 if (genealogy && genealogy.source_attributions) {
                     const attr = genealogy.source_attributions.find(a => a.source_ref === sourceRef);
-                    if (attr) attributedSegments = attr.segments.map(s => s.text);
+                    if (attr && attr.segments) {
+                        attributedSegments = attr.segments.map(s => s.text);
+                    }
                 }
 
                 const sentences = fullText.split(/([.!?]+)/).filter(Boolean);
                 const responseWords = response.toLowerCase().split(' ');
                 let reconstructed = [];
-                for (let i = 0; i < sentences.length; i += 2) reconstructed.push((sentences[i] + (sentences[i+1] || "")).trim());
+                for (let i = 0; i < sentences.length; i += 2) {
+                    reconstructed.push((sentences[i] + (sentences[i+1] || "")).trim());
+                }
 
                 return reconstructed.map((s, i) => {
-                    const isBackendAttributed = attributedSegments.some(seg => s.includes(seg) || seg.includes(s));
-                    const matchCount = s.toLowerCase().split(' ').filter(w => responseWords.includes(w) && w.length > 4).length;
+                    const isBackendAttributed = attributedSegments.some(seg => 
+                        s.includes(seg) || seg.includes(s)
+                    );
+                    const matchCount = s.toLowerCase().split(' ').filter(w => 
+                        responseWords.includes(w) && w.length > 4
+                    ).length;
                     const isSoftActivated = matchCount > 1;
 
                     let className = "opacity-70";
-                    if (isBackendAttributed) className = "bg-red-100 text-black font-bold border-b-2 border-red-400";
-                    else if (isSoftActivated) className = "bg-red-50 text-black border-b border-red-200";
+                    if (isBackendAttributed) {
+                        className = "bg-red-100 text-black font-bold border-b-2 border-red-400";
+                    } else if (isSoftActivated) {
+                        className = "bg-red-50 text-black border-b border-red-200";
+                    }
 
                     return <span key={i} className={`transition-all duration-500 mr-1 ${className}`}>{s} </span>;
                 });
             };
 
             const handleSubmit = () => executeGenealogicalRAG(documentText);
-            const handleKeyPress = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit(); };
+            const handleKeyPress = (e) => { 
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    handleSubmit(); 
+                }
+            };
 
             return (
                 <div className="h-screen w-screen flex flex-col relative bg-[#f2f2f2] font-sans overflow-hidden">
@@ -280,7 +339,7 @@
                             border-radius: 4px; overflow: hidden; border: 4px solid white; box-shadow: 0 10px 30px rgba(0,0,0,0.15);
                             opacity: 0;
                             animation: pop-in 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-                            animation-delay: 1.2s; /* Venter på linjen */
+                            animation-delay: 1.2s;
                         }
                         @keyframes pop-in {
                             0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
@@ -290,7 +349,7 @@
                         .glowing-line {
                             stroke-dasharray: 5;
                             animation: dash 3s linear infinite;
-                            filter: drop-shadow(0 0 3px rgba(14, 165, 233, 0.8)); /* Sky blue glow */
+                            filter: drop-shadow(0 0 3px rgba(14, 165, 233, 0.8));
                         }
                         @keyframes dash { to { stroke-dashoffset: -20; } }
 
@@ -310,7 +369,7 @@
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
                                 <div className="w-4 h-4 bg-[#e32219] flex items-center justify-center text-white font-black italic text-[9px]">F</div>
-                                <h1 className="text-[10px] font-extrabold uppercase tracking-[0.4em] text-black">Apparat 9.7</h1>
+                                <h1 className="text-[10px] font-extrabold uppercase tracking-[0.4em] text-black">Apparat 9.8</h1>
                             </div>
                             <span className={`text-[10px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-blue-500 animate-pulse' : 'text-gray-400'}`}>{discursiveState}</span>
                         </div>
@@ -332,11 +391,24 @@
                         )}
 
                         <div className="absolute inset-0 z-0 pointer-events-none">
-                            {activeStrata.map((s, i) => ( <div key={`glow-${i}`} className="absolute rounded-full animate-glow blur-[90px]" style={{ left: `${s.pos.x}%`, top: `${s.pos.y}%`, width: '45%', height: '45%', background: `radial-gradient(circle, ${s.color} 0%, transparent 85%)`, transform: 'translate(-50%, -50%)', animationDelay: `${i * 1.5}s`, opacity: 0.3 }} /> ))}
+                            {activeStrata.map((s, i) => ( 
+                                <div key={`glow-${i}`} className="absolute rounded-full animate-glow blur-[90px]" 
+                                    style={{ 
+                                        left: `${s.pos.x}%`, 
+                                        top: `${s.pos.y}%`, 
+                                        width: '45%', 
+                                        height: '45%', 
+                                        background: `radial-gradient(circle, ${s.color} 0%, transparent 85%)`, 
+                                        transform: 'translate(-50%, -50%)', 
+                                        animationDelay: `${i * 1.5}s`, 
+                                        opacity: 0.3 
+                                    }} 
+                                /> 
+                            ))}
                         </div>
 
                         <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                            {/* Lines to Visual Nodes (ANIMATED CURVES) */}
+                            {/* Lines to Visual Nodes */}
                             {visualNodes.map((v, i) => ( 
                                 <path 
                                     key={`vis-link-${i}`} 
@@ -356,7 +428,16 @@
                             })}
 
                             {/* Lines to Hovered/Selected */}
-                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSources.find(ss => ss.id === s.id)) && ( <path key={`path-${i}`} d={`M ${viewport.w / 2} ${viewport.h - 140} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`} stroke={s.color} strokeWidth="1.2" fill="none" strokeDasharray="4,4" className="animate-in fade-in duration-700" /> ))}
+                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSources.find(ss => ss.id === s.id)) && ( 
+                                <path key={`path-${i}`} 
+                                    d={`M ${viewport.w / 2} ${viewport.h - 140} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`} 
+                                    stroke={s.color} 
+                                    strokeWidth="1.2" 
+                                    fill="none" 
+                                    strokeDasharray="4,4" 
+                                    className="animate-in fade-in duration-700" 
+                                /> 
+                            ))}
                         </svg>
 
                         <div className="absolute inset-0 z-20 pointer-events-none">
@@ -364,15 +445,24 @@
                                 const isSelected = selectedSources.find(ss => ss.id === s.id);
                                 const isDimmed = selectedSources.length > 0 && !isSelected;
                                 const attribution = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
-                                const hasAttribution = attribution && attribution.segments.length > 0;
+                                const hasAttribution = attribution && attribution.segments && attribution.segments.length > 0;
                                 
-                                // Text length logic: Standard (90) -> Hover (220) -> Active (800+)
+                                // Use excerpt from backend if available, otherwise fallback to truncation
+                                const displayText = s.excerpt || s.text;
                                 const textLength = isSelected ? 800 : (hoveredSource === s.id ? 220 : 90);
 
                                 return (
-                                    <div key={s.id} onClick={() => toggleSource(s)} onMouseEnter={() => setHoveredSource(s.id)} onMouseLeave={() => setHoveredSource(null)}
+                                    <div key={s.id} 
+                                        onClick={() => toggleSource(s)} 
+                                        onMouseEnter={() => setHoveredSource(s.id)} 
+                                        onMouseLeave={() => setHoveredSource(null)}
                                         className={`source-node absolute p-5 border-l-[3px] w-[260px] pointer-events-auto cursor-pointer bg-white/40 backdrop-blur-xl border border-white/30 ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected ? 'active' : 'shadow-sm'}`} 
-                                        style={{ left: `${s.pos.x}%`, top: `${s.pos.y}%`, transform: 'translate(-50%, -50%)', borderColor: (hoveredSource === s.id || isSelected) ? s.color : 'rgba(0,0,0,0.05)' }}>
+                                        style={{ 
+                                            left: `${s.pos.x}%`, 
+                                            top: `${s.pos.y}%`, 
+                                            transform: 'translate(-50%, -50%)', 
+                                            borderColor: (hoveredSource === s.id || isSelected) ? s.color : 'rgba(0,0,0,0.05)' 
+                                        }}>
                                         <div className="flex justify-between items-center mb-2">
                                             <span className="text-[9px] font-mono text-gray-500 uppercase font-black tracking-widest">{s.type}</span>
                                             <div className="flex items-center gap-2">
@@ -382,8 +472,13 @@
                                             </div>
                                         </div>
                                         <p className={`serif italic transition-all duration-500 leading-snug ${hoveredSource === s.id || isSelected ? 'text-[14px] text-black' : 'text-[11px] text-gray-500'}`}>
-                                            "{s.text.substring(0, textLength)}{s.text.length > textLength ? '...' : ''}"
+                                            "{displayText.substring(0, textLength)}{displayText.length > textLength ? '...' : ''}"
                                         </p>
+                                        {s.excerpt_relevance && s.excerpt_relevance > 0.5 && !isSelected && (
+                                            <div className="mt-2 text-[8px] font-mono text-blue-600 opacity-60">
+                                                ↗ {Math.round(s.excerpt_relevance * 100)}% relevant
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
@@ -391,8 +486,11 @@
 
                         <div className="absolute inset-0 z-30 pointer-events-none">
                             {visualNodes.map((v, i) => (
-                                <div key={v.id} onClick={() => setExpandedVisual(v)} className="visual-node absolute w-36 h-28 pointer-events-auto cursor-zoom-in hover:scale-110 transition-all duration-500 bg-white" style={{ left: `${v.pos.x}%`, top: `${v.pos.y}%` }}>
-                                    <img src={v.url} className="w-full h-full object-cover" />
+                                <div key={v.id} 
+                                    onClick={() => setExpandedVisual(v)} 
+                                    className="visual-node absolute w-36 h-28 pointer-events-auto cursor-zoom-in hover:scale-110 transition-all duration-500 bg-white" 
+                                    style={{ left: `${v.pos.x}%`, top: `${v.pos.y}%` }}>
+                                    <img src={v.url} className="w-full h-full object-cover" alt={v.keyword} />
                                     <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] p-1 font-mono uppercase tracking-widest backdrop-blur-sm">{v.keyword}</div>
                                 </div>
                             ))}
@@ -401,47 +499,72 @@
 
                     {/* EXPANDED VISUAL */}
                     {expandedVisual && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/80 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setExpandedVisual(null)}>
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/80 backdrop-blur-md animate-in fade-in duration-300" 
+                            onClick={() => setExpandedVisual(null)}>
                             <div className="relative max-w-4xl max-h-[80vh] bg-white p-2 shadow-2xl rounded-sm border border-gray-200">
-                                <img src={expandedVisual.url} className="max-h-[75vh] w-auto object-contain" />
+                                <img src={expandedVisual.url} className="max-h-[75vh] w-auto object-contain" alt={expandedVisual.keyword} />
                                 <div className="absolute -bottom-10 left-0 text-black">
                                     <h3 className="text-xl serif italic">{expandedVisual.keyword}</h3>
                                     <p className="text-[10px] font-mono uppercase tracking-widest text-gray-500">Arkivmateriale // {expandedVisual.type}</p>
                                 </div>
-                                <button className="absolute -top-12 right-0 text-black hover:text-red-500 text-[10px] uppercase font-bold tracking-widest flex items-center gap-2">LUK <i data-lucide="x" className="w-4 h-4"></i></button>
+                                <button className="absolute -top-12 right-0 text-black hover:text-red-500 text-[10px] uppercase font-bold tracking-widest flex items-center gap-2">
+                                    LUK <i data-lucide="x" className="w-4 h-4"></i>
+                                </button>
                             </div>
                         </div>
                     )}
 
-                    {/* WORKBENCH PANEL - SAFETY CHECKED */}
-                    {selectedSources.length > 0 && (
+                    {/* WORKBENCH PANEL - SAFETY ENHANCED */}
+                    {selectedSources && selectedSources.length > 0 && (
                         <aside className="fixed right-0 top-10 bottom-0 w-[450px] analysis-panel z-40 overflow-y-auto flex flex-col animate-in slide-in-from-right duration-500">
                             <header className="p-6 border-b border-gray-100 flex justify-between items-center bg-white/50 sticky top-0 z-10 backdrop-blur-md">
                                 <div>
-                                    <div className="flex items-center gap-2 mb-1"><i data-lucide="microscope" className="w-4 h-4 text-red-500"></i><span className="text-[10px] font-black uppercase text-red-500 tracking-[0.2em]">Genealogisk Arbejdsbord</span></div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <i data-lucide="microscope" className="w-4 h-4 text-red-500"></i>
+                                        <span className="text-[10px] font-black uppercase text-red-500 tracking-[0.2em]">Genealogisk Arbejdsbord</span>
+                                    </div>
                                     <h2 className="text-[11px] font-bold uppercase tracking-widest text-gray-400">{selectedSources.length} Strata valgt</h2>
                                 </div>
-                                <button onClick={closeSidebar} className="w-8 h-8 rounded-full hover:bg-gray-200/50 flex items-center justify-center transition-all cursor-pointer z-50"><i data-lucide="x" className="w-4 h-4 text-gray-600"></i></button>
+                                <button 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        closeSidebar();
+                                    }} 
+                                    className="w-8 h-8 rounded-full hover:bg-gray-200/50 flex items-center justify-center transition-all cursor-pointer z-50">
+                                    <i data-lucide="x" className="w-4 h-4 text-gray-600"></i>
+                                </button>
                             </header>
                             <div className="flex-grow overflow-y-auto p-8 space-y-12">
                                 {selectedSources.map((s, i) => (
                                     <div key={s.id} className="space-y-4 animate-in fade-in slide-in-from-bottom-4" style={{ animationDelay: `${i * 100}ms` }}>
                                         <div className="flex items-center justify-between border-b border-gray-200/50 pb-2">
-                                            <span className="text-[9px] font-mono font-black uppercase tracking-widest" style={{ color: s.color }}>{s.type} // {s.year}</span>
+                                            <span className="text-[9px] font-mono font-black uppercase tracking-widest" style={{ color: s.color }}>
+                                                {s.type} // {s.year}
+                                            </span>
                                             <span className="text-[9px] font-mono text-gray-400 italic">{s.ref}</span>
                                         </div>
-                                        <p className="text-[14px] serif italic leading-relaxed text-gray-800">{getHighlightedText(s.text, syntheticResponse, s.ref)}</p>
+                                        <p className="text-[14px] serif italic leading-relaxed text-gray-800">
+                                            {getHighlightedText(s.text, syntheticResponse, s.ref)}
+                                        </p>
                                         <div className="flex gap-4">
                                             <div className="flex-1 p-3 bg-gray-50 rounded text-[10px] text-gray-500 border border-gray-100">
                                                 <span className="font-bold uppercase block mb-1 text-black/40">Status i analysen</span>
-                                                {genealogy?.source_attributions?.some(a => a.source_ref === s.ref) ? <span className="text-green-700 font-medium">Kilden er aktivt anvendt i genereringen (Genealogisk bekræftet).</span> : <span>Kilden utgjør en del av det passive resonansrommet.</span>}
+                                                {genealogy?.source_attributions?.some(a => a.source_ref === s.ref) ? (
+                                                    <span className="text-green-700 font-medium">
+                                                        Kilden er aktivt anvendt i genereringen (Genealogisk bekræftet).
+                                                    </span>
+                                                ) : (
+                                                    <span>Kilden utgjør en del av det passive resonansrommet.</span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                             <footer className="p-6 border-t border-gray-100 bg-white/50">
-                                <button className="w-full bg-black text-white text-[10px] font-bold uppercase py-4 tracking-[0.2em] hover:bg-red-600 transition-all flex items-center justify-center gap-3 rounded-sm shadow-xl">Eksportér Krydsfelt <i data-lucide="download" className="w-3 h-3"></i></button>
+                                <button className="w-full bg-black text-white text-[10px] font-bold uppercase py-4 tracking-[0.2em] hover:bg-red-600 transition-all flex items-center justify-center gap-3 rounded-sm shadow-xl">
+                                    Eksportér Krydsfelt <i data-lucide="download" className="w-3 h-3"></i>
+                                </button>
                             </footer>
                         </aside>
                     )}
@@ -457,18 +580,51 @@
                                         return color ? <span key={i} className="border-b-2 opacity-40" style={{ borderColor: color, borderStyle: 'dotted' }}>{part}</span> : <span key={i}>{part}</span>;
                                     })}
                                 </div>
-                                <textarea value={documentText} onChange={e => setDocumentText(e.target.value)} onKeyDown={handleKeyPress} placeholder="Indtast arkitektonisk tese..." className={`w-full text-[15px] serif leading-relaxed text-black border-none outline-none focus:outline-none focus:ring-0 p-0 placeholder-black/20 resize-none bg-transparent h-[50px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`} spellCheck="false" />
+                                <textarea 
+                                    value={documentText} 
+                                    onChange={e => setDocumentText(e.target.value)} 
+                                    onKeyDown={handleKeyPress} 
+                                    placeholder="Indtast arkitektonisk tese..." 
+                                    className={`w-full text-[15px] serif leading-relaxed text-black border-none outline-none focus:outline-none focus:ring-0 p-0 placeholder-black/20 resize-none bg-transparent h-[50px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`} 
+                                    spellCheck="false" 
+                                />
                                 <div className="flex justify-end mt-2">
-                                    <button onClick={handleSubmit} disabled={isSynthesizing || !documentText.trim()} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/5 hover:bg-black/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-[9px] font-mono font-bold uppercase tracking-widest border border-white/20"><i data-lucide="send" className="w-3 h-3"></i> {isSynthesizing ? 'Analyserer...' : 'Send (⌘↵)'}</button>
+                                    <button 
+                                        onClick={handleSubmit} 
+                                        disabled={isSynthesizing || !documentText.trim()} 
+                                        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/5 hover:bg-black/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-[9px] font-mono font-bold uppercase tracking-widest border border-white/20">
+                                        <i data-lucide="send" className="w-3 h-3"></i> {isSynthesizing ? 'Analyserer...' : 'Send (⌘↵)'}
+                                    </button>
                                 </div>
                             </div>
                             {syntheticResponse && (
                                 <div className="border-t border-white/20 mt-6 pt-6 animate-in fade-in slide-in-from-bottom-2 duration-1000">
-                                    <div className="flex items-center justify-center gap-3 mb-4 opacity-40"><div className="h-[0.5px] w-8 bg-black"></div><span className="text-[9px] font-mono font-black text-black uppercase tracking-[0.3em]">Arkiv-Respons</span><div className="h-[0.5px] w-8 bg-black"></div></div>
-                                    <p className="text-xl serif italic text-gray-900 leading-tight tracking-tight text-center px-2 drop-shadow-sm">{renderResponseWithVisuals(syntheticResponse)}</p>
+                                    <div className="flex items-center justify-center gap-3 mb-4 opacity-40">
+                                        <div className="h-[0.5px] w-8 bg-black"></div>
+                                        <span className="text-[9px] font-mono font-black text-black uppercase tracking-[0.3em]">Arkiv-Respons</span>
+                                        <div className="h-[0.5px] w-8 bg-black"></div>
+                                    </div>
+                                    <p className="text-xl serif italic text-gray-900 leading-tight tracking-tight text-center px-2 drop-shadow-sm">
+                                        {renderResponseWithVisuals(syntheticResponse)}
+                                    </p>
                                     <div className="mt-6 flex justify-between items-center text-[9px] font-mono font-bold text-gray-500 uppercase tracking-widest">
-                                        <span className="flex items-center gap-2"><i data-lucide="cpu" className="w-3 h-3 text-blue-500"></i> LORA_GENEALOGICAL_9.7</span>
-                                        <button onClick={() => { setDocumentText(""); setSyntheticResponse(""); setActiveStrata([]); setVisualNodes([]); setDetectedVisuals([]); setSelectedSources([]); }} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20"><i data-lucide="refresh-cw" className="w-3 h-3"></i> RENS</button>
+                                        <span className="flex items-center gap-2">
+                                            <i data-lucide="cpu" className="w-3 h-3 text-blue-500"></i> LORA_GENEALOGICAL_9.8
+                                        </span>
+                                        <button 
+                                            onClick={() => { 
+                                                setDocumentText(""); 
+                                                setSyntheticResponse(""); 
+                                                setActiveStrata([]); 
+                                                setVisualNodes([]); 
+                                                setDetectedVisuals([]); 
+                                                setSelectedSources([]); 
+                                                setGenealogy(null);
+                                                setHoveredSource(null);
+                                            }} 
+                                            className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20">
+                                            <i data-lucide="refresh-cw" className="w-3 h-3"></i> RENS
+                                        </button>
                                     </div>
                                 </div>
                             )}
@@ -476,8 +632,13 @@
                     </div>
 
                     <footer className="h-8 bg-transparent flex items-center justify-between px-8 text-[9px] font-bold uppercase tracking-[0.2em] text-gray-400 fixed bottom-0 w-full z-40">
-                        <div className="flex gap-8"><span className="text-black/30 flex items-center gap-2 font-black">KADK // DISKURS_APPARAT</span>{logs.slice(-1).map((log, i) => ( <span key={i} className="text-black/40 animate-pulse">[{log.time}] {log.msg}</span> ))}</div>
-                        <span className="opacity-10 font-mono tracking-tighter">STABLE_BUILD_9.7_HYBRID</span>
+                        <div className="flex gap-8">
+                            <span className="text-black/30 flex items-center gap-2 font-black">KADK // DISKURS_APPARAT</span>
+                            {logs.slice(-1).map((log, i) => ( 
+                                <span key={i} className="text-black/40 animate-pulse">[{log.time}] {log.msg}</span> 
+                            ))}
+                        </div>
+                        <span className="opacity-10 font-mono tracking-tighter">STABLE_BUILD_9.8_HYBRID</span>
                     </footer>
                 </div>
             );
