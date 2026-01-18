@@ -243,7 +243,71 @@ def extract_visuals(text: str) -> list:
             found.append({"keyword": key, "url": data["url"], "type": data["type"]})
     return found
 
-# --- GENEALOGISK ANALYSE ---
+# --- FORBEDRET GENEALOGISK ANALYSE ---
+def extract_most_relevant_excerpt(source_text: str, response_text: str, min_words: int = 20, max_words: int = 80) -> dict:
+    """
+    Finner det mest relevante utdraget fra kilden som faktisk ble brukt i responsen.
+    Returnerer både utdrag og relevans-score.
+    """
+    if not embedder or not source_text or not response_text:
+        return {
+            "excerpt": source_text[:200] if len(source_text) > 200 else source_text,
+            "relevance": 0.0,
+            "method": "fallback"
+        }
+    
+    # Split source into sentences
+    sentences = re.split(r'(?<=[.!?])\s+', source_text)
+    if not sentences:
+        return {
+            "excerpt": source_text[:200],
+            "relevance": 0.0,
+            "method": "fallback"
+        }
+    
+    # Create sliding windows of sentences (3-5 sentences per window)
+    windows = []
+    for window_size in [3, 4, 5]:
+        for i in range(len(sentences) - window_size + 1):
+            window_text = " ".join(sentences[i:i+window_size])
+            word_count = len(window_text.split())
+            if min_words <= word_count <= max_words:
+                windows.append({
+                    "text": window_text,
+                    "start_idx": i,
+                    "size": window_size
+                })
+    
+    # Fallback: if no good windows, use first N words
+    if not windows:
+        words = source_text.split()[:max_words]
+        return {
+            "excerpt": " ".join(words),
+            "relevance": 0.0,
+            "method": "truncation"
+        }
+    
+    # Encode response
+    response_emb = embedder.encode(response_text, convert_to_tensor=True)
+    
+    # Encode all windows
+    window_texts = [w["text"] for w in windows]
+    window_embs = embedder.encode(window_texts, convert_to_tensor=True)
+    
+    # Calculate similarities
+    similarities = util.cos_sim(response_emb, window_embs)[0].cpu().numpy()
+    
+    # Find best match
+    best_idx = int(np.argmax(similarities))
+    best_score = float(similarities[best_idx])
+    
+    return {
+        "excerpt": windows[best_idx]["text"],
+        "relevance": best_score,
+        "method": "semantic_matching",
+        "window_position": windows[best_idx]["start_idx"]
+    }
+
 def find_attributable_segments(source_text: str, response_text: str) -> list:
     """
     Finner segmenter i kildetekst som matcher med responsen.
@@ -257,8 +321,8 @@ def find_attributable_segments(source_text: str, response_text: str) -> list:
         return []
 
     segments = []
-    window_size = 12
-    step = 6
+    window_size = 15  # Increased from 12 for better context
+    step = 5  # Decreased from 6 for more overlap
 
     for i in range(0, len(source_words) - window_size + 1, step):
         segments.append({
@@ -276,14 +340,16 @@ def find_attributable_segments(source_text: str, response_text: str) -> list:
 
     attributed = []
     for idx, sim in enumerate(similarities):
-        if sim > 0.45:
+        if sim > 0.42:  # Slightly lowered threshold
             attributed.append({
                 "text": segments[idx]["text"],
-                "similarity": float(sim)
+                "similarity": float(sim),
+                "position": segments[idx]["start_idx"]
             })
     
-    attributed.sort(key=lambda x: x["similarity"], reverse=True)
-    return attributed[:3]
+    # Sort by similarity and position, take top 5
+    attributed.sort(key=lambda x: (x["similarity"], -x["position"]), reverse=True)
+    return attributed[:5]
 
 def analyze_source_relations(strata: list, response_text: str, query: str) -> dict:
     """Avansert genealogisk analyse av forholdet mellom kilder og svar"""
@@ -294,21 +360,33 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
         "source_attributions": [],
         "source_comparisons": [],
         "query_source_relations": [],
-        "response_grounding": []
+        "response_grounding": {},
+        "epistemic_levels": []
     }
 
-    # 1. Attributions
+    # 1. Attributions med forbedret segment-tracking
     for s in strata:
         attributed = find_attributable_segments(s["text"], response_text)
         if attributed:
+            avg_similarity = sum(seg["similarity"] for seg in attributed) / len(attributed)
+            
+            # Determine epistemic level based on attribution strength
+            if avg_similarity > 0.65:
+                level = "ARKIVFAKTA"
+            elif avg_similarity > 0.50:
+                level = "ARKIV-NÆR"
+            else:
+                level = "PRAKSISBASERT"
+            
             analysis["source_attributions"].append({
                 "source_id": s.get("id", "unknown"),
                 "source_ref": s["ref"],
                 "segments": attributed,
-                "attribution_strength": sum(seg["similarity"] for seg in attributed) / len(attributed)
+                "attribution_strength": avg_similarity,
+                "epistemic_level": level
             })
 
-    # 2. Source Comparisons
+    # 2. Source Comparisons (kept from original)
     if len(strata) >= 2:
         source_texts = [s["text"] for s in strata]
         source_embs = embedder.encode(source_texts, convert_to_tensor=True)
@@ -342,6 +420,23 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
         "score": float(g_score),
         "assessment": "SOLID" if g_score > 0.7 else "MODERAT" if g_score > 0.5 else "SVAK"
     }
+    
+    # 5. Overall Epistemic Assessment
+    if analysis["source_attributions"]:
+        avg_attribution = sum(a["attribution_strength"] for a in analysis["source_attributions"]) / len(analysis["source_attributions"])
+        
+        if avg_attribution > 0.65:
+            overall_level = "ARKIVFAKTA"
+        elif avg_attribution > 0.50:
+            overall_level = "ARKIV-NÆR TOLKNING"
+        else:
+            overall_level = "PRAKSISBASERT SYNTESE"
+        
+        analysis["epistemic_levels"] = {
+            "primary_level": overall_level,
+            "average_attribution": float(avg_attribution),
+            "high_confidence_sources": len([a for a in analysis["source_attributions"] if a["attribution_strength"] > 0.65])
+        }
 
     return analysis
 
@@ -372,6 +467,7 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 6):
     - Reranking
     """
     if not (pinecone_index and embedder):
+        print("⚠️ Pinecone eller embedder ikke tilgjengelig")
         return []
     
     print(f"\n🔍 Analyserer: '{user_prompt}'")
@@ -454,6 +550,18 @@ async def api_chat(req: Request):
     
     # RAG med Mix-strategi
     matches = pinecone_search_logic(user_prompt, total_results=6)
+    
+    if not matches:
+        return JSONResponse({
+            "error": "Ingen kilder funnet. Sjekk Pinecone-tilkobling.",
+            "text": "Beklager, jeg kan ikke svare uten tilgang til arkivet.",
+            "strata": [],
+            "visuals": [],
+            "state": "FRAKOBLET",
+            "intensity": 0.0,
+            "genealogy": {}
+        }, 200)
+    
     context = "\n---\n".join([m["metadata"]["text"] for m in matches])
     
     # Bio-kontekst
@@ -466,31 +574,39 @@ async def api_chat(req: Request):
     # Temporal kontekst
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     
-    # Bygg strata
-    strata = []
-    for i, m in enumerate(matches):
-        strata.append({
-            "id": f"source_{i}",
-            "text": m["metadata"].get("text", ""),
-            "ref": f"{m['metadata'].get('author', 'Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
-            "year": m["metadata"].get("year"),
-            "type": m["metadata"].get("__ns", "primary").upper()
-        })
-
-    # HYBRID EPISTEMISK PROMPT
+    # HYBRID EPISTEMISK PROMPT (TRE-NIVÅ ONTOLOGI)
     system_prompt = (
         "Du er arkitekten Kay Fisker (1893–1965). "
-        "Når du svarer, skal du skille tydeligt mellem tre epistemiske niveauer: "
-        "1. ARKIVFAKTA: Det der står direkte i kilderne. Her skal du være streng og henvise med [1], [2]. "
-        "2. ARKIV-NÆR TOLKNING: Det man kan læse ud af sammenhængen i kilderne. Marker usikkerhed ('Det kan læses som...', 'Kilderne antyder...'). "
-        "3. PRAKSISBASERET SYNTESE: Når arkivet er taust, kan du trække på bredere arkitekturhistorisk viden om tiden og funksjonalismen, "
-        "MEN du skal markere dette tydeligt ('Set i lyset af tidens strømninger...', 'Min generelle praksis tilsiger...'). "
-        "Du må aldrig opfinde konkrete årstal, adresser eller fakta som ikke findes. "
-        "Hold svarene korte og i et nøgternt fagsprog."
+        "Du skal skille tydeligt mellem tre epistemiske niveauer:\n\n"
+        
+        "NIVÅ 1 — ARKIVFAKTA (hard binding til kilder):\n"
+        "- Kun eksplisitte sitater eller entydige parafraser fra kildematerialet\n"
+        "- Alltid kildehenvisning eller årstal\n"
+        "- Eksempel: 'I Byplanproblemer (1933) skriver jeg at...'\n\n"
+        
+        "NIVÅ 2 — ARKIV-NÆR TOLKNING (kontrollert inferens):\n"
+        "- Støttet av flere arkivfragmenter, men som tolkning\n"
+        "- Språklig markert: 'I flere tekster fra 1930-årene fremstår...', 'Kilderne antyder...'\n"
+        "- Ingen nye begreper som ikke finnes i materialet\n\n"
+        
+        "NIVÅ 3 — PRAKSISBASERT SYNTESE (arkitekturhistorisk kontekst):\n"
+        "- Tillatt å bruke bredere faglig kontekst når arkivet er taust\n"
+        "- Alltid markert: 'Set i lyset av tidens funksjonalisme...', 'Min generelle praksis tilsiger...'\n"
+        "- Aldri presentert som direkte sitat eller eksplisitt mening\n\n"
+        
+        "KRITISK REGEL:\n"
+        "Du må ALDRI formulere en tolkning eller kontekstuell refleksjon som om den var et direkt arkivutsagn.\n"
+        "Hvis du beveger deg bort fra eksplisitte kilder, skal dette markeres språklig.\n\n"
+        
+        "FORBUDT:\n"
+        "- Opfinnelse av konkrete årstal, adresser eller fakta som ikke finnes i kildene\n"
+        "- Umarkerte generaliseringer presentert som fakta\n\n"
+        
+        "Hold svarene korte (max 2-3 setninger) og i et nøgternt fagsprog."
     )
     
     if bio_context:
-        system_prompt += f"\nBiografisk kontekst:\n{bio_context}\n"
+        system_prompt += f"\n\nBiografisk kontekst (for tolkning):\n{bio_context}\n"
     if temporal_context:
         system_prompt += f"\nRelevant tidsperiode:\n{temporal_context}\n"
     
@@ -503,21 +619,52 @@ async def api_chat(req: Request):
     
     result = pipe(
         full_prompt,
-        max_new_tokens=180,
-        temperature=0.2,
-        top_p=0.9,
-        repetition_penalty=1.15,
+        max_new_tokens=200,  # Increased slightly for nuanced responses
+        temperature=0.25,  # Slight increase for less rigid outputs
+        top_p=0.92,
+        repetition_penalty=1.12,
         do_sample=True
     )
     
     generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
     generated_text = re.sub(r"^(System:|Spørgsmål:|###).*", "", generated_text, flags=re.MULTILINE).strip()
     
-    # Analyser
+    # Clean up any remaining artifacts
+    generated_text = re.sub(r"\n+", " ", generated_text).strip()
+    
+    # Bygg strata MED relevante utdrag
+    strata = []
+    for i, m in enumerate(matches):
+        full_text = m["metadata"].get("text", "")
+        
+        # Extract most relevant excerpt for display
+        excerpt_info = extract_most_relevant_excerpt(full_text, generated_text, min_words=25, max_words=85)
+        
+        strata.append({
+            "id": f"source_{i}",
+            "text": full_text,  # Full text for analysis
+            "excerpt": excerpt_info["excerpt"],  # Relevant excerpt for display
+            "excerpt_relevance": excerpt_info["relevance"],
+            "ref": f"{m['metadata'].get('author', 'Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
+            "year": m["metadata"].get("year"),
+            "type": m["metadata"].get("__ns", "primary").upper(),
+            "score": m.get("score", 0.0)  # Add similarity score
+        })
+
+    # Analyser med forbedret genealogi
     genealogy = analyze_source_relations(strata, generated_text, user_prompt)
     visuals = extract_visuals(generated_text)
     
-    state = "VISUEL_AKKUMULERING" if visuals else ("OVERMETNING" if len(strata) > 4 else "FRIKSJON")
+    # Determine state based on epistemic level
+    epistemic_level = genealogy.get("epistemic_levels", {}).get("primary_level", "FRIKSJON")
+    if visuals:
+        state = "VISUEL_AKKUMULERING"
+    elif epistemic_level == "ARKIVFAKTA":
+        state = "ARKIV-DIREKTE"
+    elif epistemic_level == "ARKIV-NÆR TOLKNING":
+        state = "TOLKNING"
+    else:
+        state = "SYNTESE"
     
     return {
         "text": generated_text,
