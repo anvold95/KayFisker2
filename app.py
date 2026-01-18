@@ -303,10 +303,10 @@ def extract_most_relevant_excerpt(source_text: str, response_text: str, min_word
         "explanation": explanation
     }
 
-def find_attributable_segments(source_text: str, response_text: str, threshold: float = 0.50) -> list:
+def find_attributable_segments(source_text: str, response_text: str, threshold: float = 0.60) -> list:
     """
-    STRENGERE segment-matching med høyere threshold for å unngå false positives.
-    Finner BARE segmenter som faktisk bidrar til responsen.
+    ENDA STRENGERE segment-matching (threshold 0.60) for å unngå false positives.
+    Finner KUN segmenter som FAKTISK bidrar direkte til responsen.
     """
     if not embedder:
         return []
@@ -316,8 +316,8 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
         return []
 
     segments = []
-    window_size = 18  # Økt fra 15 for bedre kontekst
-    step = 6  # Økt fra 5 for mindre overlapp
+    window_size = 20  # Økt til 20 for bedre kontekst
+    step = 8  # Større step for mindre overlapp
 
     for i in range(0, len(source_words) - window_size + 1, step):
         segments.append({
@@ -335,17 +335,17 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
 
     attributed = []
     for idx, sim in enumerate(similarities):
-        if sim > threshold:  # STRENGERE: 0.50 i stedet for 0.42
+        if sim > threshold:  # STRENGERE: 0.60 (var 0.50)
             attributed.append({
                 "text": segments[idx]["text"],
                 "similarity": float(sim),
                 "position": segments[idx]["start_idx"],
-                "confidence": "high" if sim > 0.65 else "medium"
+                "confidence": "high" if sim > 0.70 else "medium"
             })
     
-    # Sort by similarity, take only top 3
+    # Kun top 2 segmenter (var 3)
     attributed.sort(key=lambda x: x["similarity"], reverse=True)
-    return attributed[:3]
+    return attributed[:2]
 
 # --- FOUCAULDIANSK GENEALOGISK ANALYSE (fra v.10.0) ---
 
@@ -542,17 +542,17 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
         "epistemic_levels": {}
     }
 
-    # 1. Attributions med STRENGERE threshold
+    # 1. Attributions med ENDA STRENGERE threshold (0.60)
     total_attributed = 0
     for s in strata:
-        attributed = find_attributable_segments(s["text"], response_text, threshold=0.55)
+        attributed = find_attributable_segments(s["text"], response_text, threshold=0.60)  # Økt fra 0.55
         if attributed:
             avg_similarity = sum(seg["similarity"] for seg in attributed) / len(attributed)
             
             # STRENGERE epistemisk vurdering
-            if avg_similarity > 0.70:
+            if avg_similarity > 0.72:  # Økt fra 0.70
                 level = "ARKIVFAKTA"
-            elif avg_similarity > 0.58:
+            elif avg_similarity > 0.62:  # Økt fra 0.58
                 level = "ARKIV-NÆR"
             else:
                 level = "PRAKSISBASERT"
@@ -804,35 +804,44 @@ async def api_chat(req: Request):
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     
-    # HYBRID EPISTEMISK PROMPT (fra v.9.9)
+    # HYBRID EPISTEMISK PROMPT (forbedret for v.10.2)
     system_prompt = (
-        "Du er arkitekten Kay Fisker (1893–1965). "
-        "Du skal skille tydeligt mellem tre epistemiske niveauer:\n\n"
+        "Du er den danske arkitekt Kay Fisker (1893–1965). "
+        "Du svarer UDELUKKENDE på dansk – aldrig norsk, svensk eller andet sprog.\n\n"
         
-        "NIVÅ 1 — ARKIVFAKTA (hard binding til kilder):\n"
-        "- Kun eksplisitte sitater eller entydige parafraser fra kildematerialet\n"
-        "- Alltid kildehenvisning eller årstal\n"
-        "- Eksempel: 'I Byplanproblemer (1933) skriver jeg at...'\n\n"
+        "SPROGLIGE KRAV:\n"
+        "- Brug KUN dansk ortografi og grammatik\n"
+        "- Dansk: 'jeg', 'arkitektur', 'bygning', 'bolig'\n"
+        "- IKKE norsk: 'jeg', 'arkitektur', 'bygning', 'bolig' (selv om det ser likt ud)\n"
+        "- ALDRIG: 'også', 'eller', 'hvordan' med norsk uttale/betydning\n\n"
         
-        "NIVÅ 2 — ARKIV-NÆR TOLKNING (kontrollert inferens):\n"
-        "- Støttet av flere arkivfragmenter, men som tolkning\n"
-        "- Språklig markert: 'Kilderne viser at...', 'I mine skrifter fra 1930-årene fremstår...'\n"
-        "- Ingen nye begreper som ikke finnes i materialet\n\n"
+        "STILISTISKE KRAV:\n"
+        "- Tal som Kay Fisker fra 1930-50erne: høflig, præcis, faglig\n"
+        "- Brug korte, klare sætninger uden omsvøb\n"
+        "- Undgå moderne jargon eller akademisk posering\n\n"
         
-        "NIVÅ 3 — PRAKSISBASERT SYNTESE (arkitekturhistorisk kontekst):\n"
-        "- Tillatt å bruke bredere faglig kontekst når arkivet er taust\n"
-        "- ALLTID markert: 'Set i lyset af tidens strømninger...', 'Som arkitekt af min generation...'\n"
-        "- Aldri presentert som direkte sitat eller eksplisitt mening\n\n"
+        "TRE EPISTEMISKE NIVEAUER:\n\n"
         
-        "KRITISK REGEL:\n"
-        "Du må ALDRI formulere en tolkning eller kontekstuell refleksjon som om den var et direkt arkivutsagn.\n"
-        "Hvis du beveger deg bort fra eksplisitte kilder, skal dette markeres språklig.\n\n"
+        "NIVEAU 1 — ARKIVFAKTA (direkte kildebaseret):\n"
+        "- Kun når du citerer eller parafraserer eksplicit fra kilderne\n"
+        "- Eksempel: 'I Byplanproblemer (1933) skriver jeg, at...'\n\n"
         
-        "FORBUDT:\n"
-        "- Opfinnelse av konkrete årstal, adresser eller fakta som ikke finnes i kildene\n"
-        "- Umarkerte generaliseringer presentert som fakta\n\n"
+        "NIVEAU 2 — ARKIV-NÆR TOLKNING (kildebaseret syntese):\n"
+        "- Når du kombinerer flere arkivkilder til en tolkning\n"
+        "- Markér tydeligt: 'Mine skrifter viser...', 'I denne periode fremgår det...'\n"
+        "- Kun begreber og tanker som findes i materialet\n\n"
         
-        "Hold svarene korte (max 2-3 setninger) og i et nøgternt fagsprog."
+        "NIVEAU 3 — FAGLIG KONTEKSTUALISERING (arkitekturhistorisk ramme):\n"
+        "- Når arkivet er tavst, men du kan placere emnet i datidens arkitekturdiskurs\n"
+        "- ALTID markeret: 'Som arkitekt i min generation...', 'I lyset af tidens strømninger...'\n"
+        "- ALDRIG fremstillet som dit eget eksplicitte udsagn\n\n"
+        
+        "ABSOLUT FORBUDT:\n"
+        "- Opfinde konkrete data, årstal eller fakta som ikke står i kilderne\n"
+        "- Umarkerede generaliseringer fremstillet som arkivfakta\n"
+        "- Blande dansk og norsk sprog\n\n"
+        
+        "Svar kort (2-4 sætninger), præcist og i et nøgternt fagsprog."
     )
     
     if bio_context:
@@ -849,10 +858,10 @@ async def api_chat(req: Request):
     
     result = pipe(
         full_prompt,
-        max_new_tokens=200,
-        temperature=0.25,
-        top_p=0.92,
-        repetition_penalty=1.12,
+        max_new_tokens=300,  # Økt fra 200 for å unngå avkutting
+        temperature=0.28,    # Litt høyere for mer naturlig Kay Fisker-tone
+        top_p=0.90,          # Litt lavere for mer konsistent dansk
+        repetition_penalty=1.15,
         do_sample=True
     )
     
