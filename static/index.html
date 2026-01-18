@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Diskursmaskine v.8.12 - Genealogical Analysis</title>
+    <title>Fisker / Diskursmaskine v.8.13 - Analytical Workbench</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -25,10 +25,12 @@
             const [intensity, setIntensity] = useState(0.0);
             const [isSynthesizing, setIsSynthesizing] = useState(false);
             const [syntheticResponse, setSyntheticResponse] = useState("");
-            const [selectedSource, setSelectedSource] = useState(null);
+            
+            // Endret til array for multi-seleksjon (fra v8.13)
+            const [selectedSources, setSelectedSources] = useState([]); 
             const [hoveredSource, setHoveredSource] = useState(null);
+            
             const [genealogy, setGenealogy] = useState(null);
-            const [showAnalysis, setShowAnalysis] = useState(false);
             
             const [viewport, setViewport] = useState({ 
                 w: typeof window !== 'undefined' ? window.innerWidth : 1200, 
@@ -78,11 +80,12 @@
 
             useEffect(() => {
                 lucide.createIcons();
-            }, [activeStrata, syntheticResponse, isSynthesizing, selectedSource, showAnalysis]);
+            }, [activeStrata, syntheticResponse, isSynthesizing, selectedSources]);
 
             const executeGenealogicalRAG = async (text) => {
                 if (isSynthesizing) return;
-                if (!text || text.trim().length < 3) {
+                const prompt = text || documentText;
+                if (!prompt || prompt.trim().length < 3) {
                     addLog("Spørsmål for kort");
                     return;
                 }
@@ -94,7 +97,7 @@
                     const response = await fetch('/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: text })
+                        body: JSON.stringify({ message: prompt })
                     });
                     
                     if (!response.ok) {
@@ -121,6 +124,8 @@
                     setDiscursiveState(data.state || "FRIKSJON");
                     setIntensity(data.intensity || 0.4);
                     setGenealogy(data.genealogy || null);
+                    // Reset selection when new analysis arrives? Or keep? Let's clear to show new relations.
+                    setSelectedSources([]); 
                     addLog(`Respons etableret.`);
                 } catch (error) {
                     addLog(`Forbindelsesfejl: ${error.message}`);
@@ -137,6 +142,56 @@
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                     handleSubmit();
                 }
+            };
+
+            // Toggle function for multi-selection (v8.13)
+            const toggleSource = (source) => {
+                setSelectedSources(prev => {
+                    const exists = prev.find(s => s.id === source.id);
+                    if (exists) return prev.filter(s => s.id !== source.id);
+                    return [...prev, source];
+                });
+            };
+
+            // Funksjon for å highlighte tekst basert på respons OG backend-genealogi
+            const getHighlightedText = (fullText, response, sourceRef) => {
+                if (!response) return <span>{fullText}</span>;
+                
+                // 1. Sjekk backend genealogy først
+                let attributedSegments = [];
+                if (genealogy && genealogy.source_attributions) {
+                    const attr = genealogy.source_attributions.find(a => a.source_ref === sourceRef);
+                    if (attr) attributedSegments = attr.segments.map(s => s.text);
+                }
+
+                // 2. Fallback til klient-side heuristikk (v8.13 logikk)
+                const sentences = fullText.split(/([.!?]+)/).filter(Boolean); // Keep delimiters
+                const responseWords = response.toLowerCase().split(' ');
+
+                // Rekonstruer setninger (fordi split med delimiter lager array som ["Setning", ".", "Neste", "!"])
+                let reconstructed = [];
+                for (let i = 0; i < sentences.length; i += 2) {
+                    reconstructed.push((sentences[i] + (sentences[i+1] || "")).trim());
+                }
+
+                return reconstructed.map((s, i) => {
+                    // Sjekk hard kobling (backend)
+                    const isBackendAttributed = attributedSegments.some(seg => s.includes(seg) || seg.includes(s));
+                    
+                    // Sjekk myk kobling (v8.13 heuristikk)
+                    const matchCount = s.toLowerCase().split(' ').filter(w => responseWords.includes(w) && w.length > 4).length;
+                    const isSoftActivated = matchCount > 1;
+
+                    let className = "opacity-60"; // Default dim
+                    if (isBackendAttributed) className = "bg-red-100 text-black font-bold border-b-2 border-red-400";
+                    else if (isSoftActivated) className = "bg-red-50 text-black border-b border-red-200";
+
+                    return (
+                        <span key={i} className={`transition-all duration-500 mr-1 ${className}`}>
+                            {s}{" "}
+                        </span>
+                    );
+                });
             };
 
             return (
@@ -181,11 +236,16 @@
                             background: rgba(255, 255, 255, 0.9) !important; 
                             box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.1); 
                         }
+                        .source-node.active { border: 2px solid black; box-shadow: 0 0 0 4px rgba(0,0,0,0.05); z-index: 50; }
+
+                        @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+                        .scan-line { animation: scan-line 10s linear infinite; }
                         
                         .analysis-panel {
-                            background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.1));
+                            background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.9));
                             backdrop-filter: blur(40px);
-                            border-left: 2px solid rgba(227, 34, 25, 0.3);
+                            border-left: 1px solid rgba(0,0,0,0.05);
+                            box-shadow: -20px 0 50px rgba(0,0,0,0.05);
                         }
                     `}</style>
 
@@ -194,7 +254,7 @@
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
                                 <div className="w-3 h-3 bg-[#e32219] flex items-center justify-center text-white font-black italic text-[6px]">F</div>
-                                <h1 className="text-[6px] font-extrabold uppercase tracking-[0.4em] text-black">Apparat 8.12</h1>
+                                <h1 className="text-[6px] font-extrabold uppercase tracking-[0.4em] text-black">Apparat 8.13</h1>
                             </div>
                             <span className={`text-[6px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`}>
                                 {discursiveState}
@@ -204,23 +264,14 @@
                             <div className="w-16 h-[1px] bg-gray-200 relative overflow-hidden">
                                 <div className="h-full bg-black transition-all duration-2000" style={{ width: `${intensity * 100}%` }}></div>
                             </div>
-                            {genealogy && (
-                                <button 
-                                    onClick={() => setShowAnalysis(!showAnalysis)}
-                                    className="text-[6px] font-mono uppercase tracking-widest hover:text-red-500 transition-colors flex items-center gap-1"
-                                >
-                                    <i data-lucide="git-branch" className="w-2.5 h-2.5"></i>
-                                    {showAnalysis ? 'SKJUL' : 'GENEALOGI'}
-                                </button>
-                            )}
                             <span className="text-[6px] font-mono text-gray-400 uppercase tracking-widest italic">KADK RESEARCH</span>
                         </div>
                     </header>
 
                     {/* ARCHIVE CANVAS */}
-                    <main className={`flex-grow relative z-10 transition-colors duration-1000 ${selectedSource ? 'bg-black/5' : 'bg-transparent'} ${showAnalysis ? 'mr-96' : ''}`}>
+                    <main className={`flex-grow relative z-10 transition-colors duration-1000 ${selectedSources.length > 0 ? 'bg-black/5 mr-[450px]' : 'bg-transparent mr-0'}`}>
                         
-                        {/* CHANGED: New subtle pulse instead of scan-line */}
+                        {/* PULSE ANIMATION (v8.12 style) */}
                         {isSynthesizing && (
                             <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
                                 <div className="w-[60vh] h-[60vh] rounded-full blur-[100px] bg-gradient-to-tr from-blue-100 to-white opacity-20 animate-breathe"></div>
@@ -248,9 +299,26 @@
                             ))}
                         </div>
 
-                        {/* CONNECTION PATHS */}
+                        {/* CONNECTION PATHS (v8.13 Style) */}
                         <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSource?.id === s.id) && (
+                            {/* Linjer mellom valgte kilder */}
+                            {selectedSources.length > 1 && selectedSources.map((s, i) => {
+                                const next = selectedSources[i + 1];
+                                if (!next) return null;
+                                return (
+                                    <line 
+                                        key={`link-${i}`}
+                                        x1={`${s.pos.x}%`} y1={`${s.pos.y}%`}
+                                        x2={`${next.pos.x}%`} y2={`${next.pos.y}%`}
+                                        stroke="rgba(0,0,0,0.2)"
+                                        strokeWidth="1"
+                                        strokeDasharray="4,4"
+                                        className="animate-in fade-in duration-1000"
+                                    />
+                                );
+                            })}
+                            {/* Kurver til hover/selection */}
+                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSources.find(ss => ss.id === s.id)) && (
                                 <path 
                                     key={`path-${i}`}
                                     d={`M ${viewport.w / 2} ${viewport.h - 140} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`}
@@ -266,25 +334,25 @@
                         {/* SOURCE NODES */}
                         <div className="absolute inset-0 z-20 pointer-events-none">
                             {activeStrata.map((s, i) => {
-                                const isFocused = selectedSource?.id === s.id;
-                                const isDimmed = selectedSource && !isFocused;
+                                const isSelected = selectedSources.find(ss => ss.id === s.id);
+                                const isDimmed = selectedSources.length > 0 && !isSelected;
                                 
-                                // Finn attribution for denne kilden
+                                // Sjekk backend for "hard" attribution for visuell indikasjon på noden
                                 const attribution = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                 const hasAttribution = attribution && attribution.segments.length > 0;
                                 
                                 return (
                                     <div 
                                         key={s.id} 
-                                        onClick={() => setSelectedSource(isFocused ? null : s)}
+                                        onClick={() => toggleSource(s)}
                                         onMouseEnter={() => setHoveredSource(s.id)}
                                         onMouseLeave={() => setHoveredSource(null)}
-                                        className={`source-node absolute p-5 border-l-[3px] max-w-[280px] pointer-events-auto cursor-pointer bg-white/40 backdrop-blur-xl border border-white/30 ${isDimmed ? 'opacity-5 blur-sm' : 'opacity-100'} ${hoveredSource === s.id ? 'border-black' : 'border-black/5 shadow-sm'}`} 
+                                        className={`source-node absolute p-5 border-l-[3px] max-w-[280px] pointer-events-auto cursor-pointer bg-white/40 backdrop-blur-xl border border-white/30 ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected ? 'active bg-white/80' : 'shadow-sm'}`} 
                                         style={{ 
                                             left: `${s.pos.x}%`, 
                                             top: `${s.pos.y}%`, 
                                             transform: 'translate(-50%, -50%)',
-                                            borderColor: (hoveredSource === s.id || isFocused) ? s.color : 'rgba(0,0,0,0.05)',
+                                            borderColor: (hoveredSource === s.id || isSelected) ? s.color : 'rgba(0,0,0,0.05)',
                                         }}
                                     >
                                         <div className="flex justify-between items-center mb-2">
@@ -293,119 +361,68 @@
                                                 {hasAttribution && (
                                                     <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" title="Brukt i svar"></div>
                                                 )}
+                                                {isSelected && <i data-lucide="check-circle" className="w-3 h-3 text-green-600"></i>}
                                                 <span className="text-[6px] font-mono text-gray-300">#{s.year || 'ARKIV'}</span>
                                             </div>
                                         </div>
-                                        <p className={`serif italic transition-all duration-500 leading-snug ${hoveredSource === s.id || isFocused ? 'text-[13px] text-black' : 'text-[10px] text-gray-400'}`}>
-                                            "{hoveredSource === s.id || isFocused ? s.text : s.text.substring(0, 90) + '...'}"
+                                        <p className={`serif italic transition-all duration-500 leading-snug ${hoveredSource === s.id || isSelected ? 'text-[13px] text-black' : 'text-[10px] text-gray-400'}`}>
+                                            "{hoveredSource === s.id || isSelected ? s.text : s.text.substring(0, 90) + '...'}"
                                         </p>
-                                        {(hoveredSource === s.id || isFocused) && (
-                                            <div className="mt-3 pt-2 border-t border-black/5">
-                                                <div className="flex justify-between items-center">
-                                                    <span className="text-[5px] font-bold uppercase tracking-widest text-red-500">RELATION IDENTIFICERET</span>
-                                                    <span className="text-[6px] font-mono text-gray-400 italic">{s.ref}</span>
-                                                </div>
-                                                {hasAttribution && (
-                                                    <div className="mt-2 text-[6px] font-mono text-gray-500">
-                                                        Styrke: {(attribution.attribution_strength * 100).toFixed(0)}%
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
                                     </div>
                                 );
                             })}
                         </div>
                     </main>
 
-                    {/* GENEALOGICAL ANALYSIS PANEL */}
-                    {showAnalysis && genealogy && (
-                        <aside className="fixed right-0 top-9 bottom-0 w-96 analysis-panel z-40 overflow-y-auto p-6">
-                            <div className="space-y-6">
+                    {/* SIDE PANEL: ANALYTICAL WORKBENCH (v8.13 Style) */}
+                    {selectedSources.length > 0 && (
+                        <aside className="fixed right-0 top-9 bottom-0 w-[450px] analysis-panel z-40 overflow-y-auto flex flex-col animate-in slide-in-from-right duration-500">
+                            <header className="p-6 border-b border-gray-100 flex justify-between items-center bg-white/50 sticky top-0 z-10 backdrop-blur-md">
                                 <div>
-                                    <h3 className="text-[8px] font-black uppercase tracking-widest mb-3 flex items-center gap-2">
-                                        <i data-lucide="git-branch" className="w-3 h-3 text-red-500"></i>
-                                        Genealogisk Analyse
-                                    </h3>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <i data-lucide="microscope" className="w-3 h-3 text-red-500"></i>
+                                        <span className="text-[8px] font-black uppercase text-red-500 tracking-[0.2em]">Genealogisk Arbejdsbord</span>
+                                    </div>
+                                    <h2 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{selectedSources.length} Strata valgt</h2>
                                 </div>
+                                <button onClick={() => setSelectedSources([])} className="w-8 h-8 rounded-full hover:bg-gray-200/50 flex items-center justify-center transition-all">
+                                    <i data-lucide="x" className="w-4 h-4 text-gray-500"></i>
+                                </button>
+                            </header>
 
-                                {/* Response Grounding */}
-                                <div className="bg-white/30 rounded-lg p-4">
-                                    <div className="text-[7px] font-bold uppercase tracking-widest text-gray-500 mb-2">Forankring</div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex-grow h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                            <div 
-                                                className="h-full bg-gradient-to-r from-red-500 to-blue-500 transition-all duration-1000"
-                                                style={{ width: `${(genealogy.response_grounding?.score || 0) * 100}%` }}
-                                            ></div>
+                            <div className="flex-grow overflow-y-auto p-8 space-y-12">
+                                {selectedSources.map((s, i) => (
+                                    <div key={s.id} className="space-y-4 animate-in fade-in slide-in-from-bottom-4" style={{ animationDelay: `${i * 100}ms` }}>
+                                        <div className="flex items-center justify-between border-b border-gray-200/50 pb-2">
+                                            <span className="text-[7px] font-mono font-black uppercase tracking-widest" style={{ color: s.color }}>{s.type} // {s.year}</span>
+                                            <span className="text-[6px] font-mono text-gray-400 italic">{s.ref}</span>
                                         </div>
-                                        <span className="text-[8px] font-mono font-bold">{genealogy.response_grounding?.assessment}</span>
-                                    </div>
-                                    <p className="text-[7px] text-gray-600 mt-2 leading-relaxed">
-                                        Responsen er <strong>{genealogy.response_grounding?.assessment?.toLowerCase()}</strong> forankret i arkivmaterialet
-                                    </p>
-                                </div>
+                                        
+                                        {/* TEXT CONTENT WITH HIGHLIGHTING */}
+                                        <p className="text-[13px] serif italic leading-relaxed text-gray-800">
+                                            {getHighlightedText(s.text, syntheticResponse, s.ref)}
+                                        </p>
 
-                                {/* Source Attributions */}
-                                {genealogy.source_attributions && genealogy.source_attributions.length > 0 && (
-                                    <div>
-                                        <div className="text-[7px] font-bold uppercase tracking-widest text-gray-500 mb-3">Brukte Segmenter</div>
-                                        <div className="space-y-3">
-                                            {genealogy.source_attributions.map((attr, i) => (
-                                                <div key={i} className="bg-white/40 rounded-lg p-3 border border-black/5">
-                                                    <div className="text-[6px] font-mono text-gray-400 mb-1">{attr.source_ref}</div>
-                                                    {attr.segments.slice(0, 2).map((seg, j) => (
-                                                        <div key={j} className="mt-2">
-                                                            <div className="text-[7px] italic text-gray-700 leading-relaxed">"{seg.text}"</div>
-                                                            <div className="text-[6px] font-mono text-gray-400 mt-1">
-                                                                Likhet: {(seg.similarity * 100).toFixed(0)}%
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            ))}
+                                        {/* STATUS BOX */}
+                                        <div className="flex gap-4">
+                                            <div className="flex-1 p-3 bg-gray-50 rounded text-[8px] text-gray-500 border border-gray-100">
+                                                <span className="font-bold uppercase block mb-1 text-black/40">Status i analysen</span>
+                                                {genealogy?.source_attributions?.some(a => a.source_ref === s.ref) ? (
+                                                    <span className="text-green-700 font-medium">Kilden er aktivt anvendt i genereringen (Genealogisk bekræftet).</span>
+                                                ) : (
+                                                    <span>Kilden utgjør en del av det passive resonansrommet.</span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
-                                )}
-
-                                {/* Source Comparisons */}
-                                {genealogy.source_comparisons && genealogy.source_comparisons.length > 0 && (
-                                    <div>
-                                        <div className="text-[7px] font-bold uppercase tracking-widest text-gray-500 mb-3">Kilde-Relasjoner</div>
-                                        <div className="space-y-2">
-                                            {genealogy.source_comparisons.map((comp, i) => (
-                                                <div key={i} className="bg-white/30 rounded p-2 text-[7px]">
-                                                    <div className="flex items-center justify-between mb-1">
-                                                        <span className="font-mono text-gray-600">{comp.source_a.split('(')[0]}</span>
-                                                        <i data-lucide="arrow-right" className="w-2 h-2 text-gray-400"></i>
-                                                        <span className="font-mono text-gray-600">{comp.source_b.split('(')[0]}</span>
-                                                    </div>
-                                                    <div className="text-[6px] uppercase tracking-wider font-bold" style={{ color: comp.relation_type === 'KONVERGENT' ? '#e32219' : '#006bb4' }}>
-                                                        {comp.relation_type} ({(comp.similarity * 100).toFixed(0)}%)
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Query-Source Relations */}
-                                {genealogy.query_source_relations && (
-                                    <div>
-                                        <div className="text-[7px] font-bold uppercase tracking-widest text-gray-500 mb-3">Relevans til Spørsmål</div>
-                                        <div className="space-y-1.5">
-                                            {genealogy.query_source_relations.map((rel, i) => (
-                                                <div key={i} className="flex items-center justify-between text-[7px] bg-white/20 rounded p-2">
-                                                    <span className="font-mono text-gray-600">{rel.source_ref.split('(')[0]}</span>
-                                                    <span className={`font-bold uppercase tracking-wider ${rel.relevance_category === 'HØY' ? 'text-green-600' : rel.relevance_category === 'MEDIUM' ? 'text-orange-500' : 'text-gray-400'}`}>
-                                                        {rel.relevance_category}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
+                                ))}
                             </div>
+
+                            <footer className="p-6 border-t border-gray-100 bg-white/50">
+                                <button className="w-full bg-black text-white text-[9px] font-bold uppercase py-4 tracking-[0.2em] hover:bg-red-600 transition-all flex items-center justify-center gap-3 rounded-sm shadow-xl">
+                                    Eksportér Krydsfelt <i data-lucide="download" className="w-3 h-3"></i>
+                                </button>
+                            </footer>
                         </aside>
                     )}
 
@@ -463,7 +480,7 @@
                                     <div className="mt-6 flex justify-between items-center text-[6px] font-mono font-bold text-gray-500 uppercase tracking-widest">
                                         <span className="flex items-center gap-2">
                                             <i data-lucide="cpu" className="w-2.5 h-2.5 text-red-500"></i>
-                                             LORA_GENEALOGICAL_8.12
+                                             LORA_GENEALOGICAL_8.13
                                         </span>
                                         <button 
                                             onClick={() => {
@@ -471,7 +488,7 @@
                                                 setSyntheticResponse(""); 
                                                 setActiveStrata([]);
                                                 setGenealogy(null);
-                                                setShowAnalysis(false);
+                                                setSelectedSources([]);
                                             }} 
                                             className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20"
                                         >
@@ -495,7 +512,7 @@
                                 <span key={i} className="text-black/40 animate-pulse">[{log.time}] {log.msg}</span>
                             ))}
                         </div>
-                        <span className="opacity-10 font-mono tracking-tighter">STABLE_BUILD_8.12.0_GENEALOGY</span>
+                        <span className="opacity-10 font-mono tracking-tighter">STABLE_BUILD_8.13.0_WORKBENCH</span>
                     </footer>
                 </div>
             );
