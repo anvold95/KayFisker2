@@ -63,29 +63,38 @@
                 return () => window.removeEventListener('resize', onResize);
             }, []);
 
-            // Collision-aware position generator
-            const getRandomNonOverlappingPos = (newNodes = []) => {
-                const existingNodes = [...activeStrata, ...visualNodes, ...newNodes];
+            // Collision-aware position generator WITH Temporal logic
+            const getSmartPosition = (year, existingNodes = []) => {
+                const allNodes = [...activeStrata, ...visualNodes, ...existingNodes];
+                
+                // Temporal logic (Y-axis based on age)
+                const yearNum = parseInt(year) || 1950;
+                const age = 2024 - yearNum;
+                // Normaliser dybde: eldre = lenger ned (høyere Y verdi)
+                // Juster faktorene for å spre dem fint utover skjermen (10% til 80% høyde)
+                const baseDepth = 10 + Math.min((age / 100) * 70, 70); 
+                
                 let attempts = 0;
                 while (attempts < 100) {
                     const x = 5 + Math.random() * 90;
-                    const y = 8 + Math.random() * 70;
+                    // Legg til litt tilfeldig variasjon i dybden (+/- 10%)
+                    const y = baseDepth + (Math.random() * 20 - 10);
                     
                     // Unngå input-området (bunn-senter)
                     if (y > 70 && x > 30 && x < 70) { attempts++; continue; } 
 
                     // Sjekk mot eksisterende
-                    const collision = existingNodes.some(node => {
+                    const collision = allNodes.some(node => {
                         const dx = Math.abs(node.pos.x - x);
                         const dy = Math.abs(node.pos.y - y);
-                        // Økt sikkerhetsavstand for collision
                         return dx < 18 && dy < 15;
                     });
 
                     if (!collision) return { x, y };
                     attempts++;
                 }
-                return { x: 10 + Math.random() * 80, y: 10 + Math.random() * 50 }; // Fallback
+                // Fallback position
+                return { x: 10 + Math.random() * 80, y: baseDepth }; 
             };
 
             useEffect(() => {
@@ -118,13 +127,13 @@
                     
                     const data = await response.json();
                     
-                    // Step 1: Plasser Strata (Tekst) uten å krasje
+                    // Step 1: Plasser Strata (Tekst) uten å krasje, med temporal logikk
                     const newStrata = [];
                     if (data.strata) {
                         data.strata.forEach((s, i) => {
                             newStrata.push({
                                 ...s,
-                                pos: getRandomNonOverlappingPos(newStrata),
+                                pos: getSmartPosition(s.year, newStrata),
                                 color: s.type === "PRIMARY" ? rams.blue : s.type === "QUOTES" ? rams.orange : rams.red
                             });
                         });
@@ -150,7 +159,8 @@
             const spawnVisual = (visual) => {
                 if (visualNodes.find(v => v.keyword === visual.keyword)) return;
                 
-                const pos = getRandomNonOverlappingPos(); // Bruker nå visualNodes i sjekken
+                // Visuals har ikke årstall direkte her, så vi plasserer dem litt tilfeldig men kollisjonsfritt
+                const pos = getSmartPosition(1960, visualNodes); 
                 const newNode = {
                     ...visual,
                     id: `vis-${Date.now()}`,
