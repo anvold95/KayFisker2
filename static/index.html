@@ -92,18 +92,31 @@
                 
                 // Forbudt område (svarsboks)
                 const forbiddenZone = { xMin: 10, xMax: 90, yMin: 60, yMax: 100 };
+                const minDistance = 30; // Minimum avstand mellom noder ved spawning
                 
                 const isValidPosition = (x, y) => {
+                    // Hard reject på forbidden zone
                     if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
                         y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) return false;
+                    
+                    // Hard reject på kanter
                     if (x < 5 || x > 95 || y < 5 || y > 58) return false;
+                    
+                    // VIKTIG: Sjekk at vi ikke spawner oppå andre noder
+                    for (const node of allNodes) {
+                        const dx = Math.abs(node.pos.x - x);
+                        const dy = Math.abs(node.pos.y - y);
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance < minDistance) return false;
+                    }
+                    
                     return true;
                 };
                 
                 // Prøv concentric circles
-                for (let radius = 0; radius <= 50; radius += 12) {
-                    for (let i = 0; i < 24; i++) {
-                        const angle = (i / 24) * 2 * Math.PI;
+                for (let radius = 0; radius <= 50; radius += 10) {
+                    for (let i = 0; i < 28; i++) {
+                        const angle = (i / 28) * 2 * Math.PI;
                         const x = 50 + radius * Math.cos(angle);
                         const y = baseDepth + radius * 0.4 * Math.sin(angle);
                         if (isValidPosition(x, y)) return { x, y };
@@ -111,8 +124,8 @@
                 }
                 
                 // Grid search
-                for (let y = 8; y <= 55; y += 10) {
-                    for (let x = 8; x <= 92; x += 10) {
+                for (let y = 8; y <= 55; y += 8) {
+                    for (let x = 8; x <= 92; x += 8) {
                         if (isValidPosition(x, y)) return { x, y };
                     }
                 }
@@ -348,8 +361,12 @@
                             velocity: { x: 0, y: 0 }
                         }));
 
-                        const REPULSION_DIST = 28; // Avstand i prosent
-                        const REPULSION_STRENGTH = 0.06; // Dytt-kraft
+                        const REPULSION_DIST = 30; // Avstand i prosent
+                        const REPULSION_STRENGTH = 0.25; // MYE KRAFTIGERE (var 0.06)
+                        const FORBIDDEN_REPULSION = 0.5; // Ekstra kraft vekk fra svarboks
+                        
+                        // Forbudt område (svarsboks)
+                        const forbiddenZone = { xMin: 10, xMax: 90, yMin: 60, yMax: 100 };
                         
                         for (let i = 0; i < nextNodes.length; i++) {
                             const nodeA = nextNodes[i];
@@ -357,6 +374,14 @@
                             // Dragged node skal ikke påvirkes
                             if (nodeA.id === draggedNode) continue;
 
+                            // REPULSION FRA SVARBOKS
+                            if (nodeA.pos.y > 55 && nodeA.pos.x > forbiddenZone.xMin && nodeA.pos.x < forbiddenZone.xMax) {
+                                // Dytt kraftig oppover
+                                nodeA.pos.y -= FORBIDDEN_REPULSION;
+                                hasMovement = true;
+                            }
+
+                            // REPULSION FRA ANDRE NODER
                             for (let j = 0; j < nextNodes.length; j++) {
                                 if (i === j) continue;
                                 const nodeB = nextNodes[j];
@@ -387,7 +412,7 @@
 
                         return hasMovement ? nextNodes : currentNodes;
                     });
-                }, 40); // ~25 fps
+                }, 30); // Økt til ~33 fps (var 40ms)
 
                 return () => clearInterval(simulationLoop);
             }, [draggedNode, activeStrata.length]);
