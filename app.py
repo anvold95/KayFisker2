@@ -688,86 +688,58 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
                 for i, s in enumerate(strata[:4])  # Max 4 kilder for å unngå for lang prompt
             ])
             
-            llm_prompt = f"""Du er en Foucauldiansk diskursanalytiker som analyserer arkitekthistoriske kilder.
+            llm_prompt = f"""Du er en Foucauldiansk diskursanalytiker som analyserer Kay Fisker's arkitektoniske skrifter.
 
-OPPGAVE: Analyser disse tekstene fra Kay Fisker og identifiser:
+OPPGAVE: Skriv en SAMMENHENGENDE GENEALOGISK ANALYSE (2-3 avsnitt) som:
 
-1. MAKTSTRUKTURER
-   - Hvem snakker? Hvilke stemmer dominerer?
-   - Hvilke stemmer er FRAVÆRENDE eller marginalisert?
-   - Hvilke institusjoner legitimerer utsagnene?
+1. Identifiserer MAKTSTRUKTURER i materialet
+   - Hvem har autoritet til å snakke om arkitektur?
+   - Hvilke stemmer er fraværende? (kvinner, arbeidere, brukere)
+   - Hvilke institusjoner legitimerer diskursen?
 
-2. PRAKSIS vs. DISKURS
-   - Er det MOTSETNINGER mellom hva som sies og hva som gjøres?
-   - Implisitte antagelser som ligger UNDER teksten?
+2. Avdekker MOTSETNINGER mellom diskurs og praksis
+   - Hva sier Fisker vs. hva han faktisk bygger?
+   - Implisitte antagelser som ikke uttales eksplisitt
+   - Økonomiske/politiske tvang som former diskursen
 
-3. EPISTEMISKE BRUDD
-   - Er det fundamentale SKIFT i hvordan begreper brukes?
-   - Hva kan ha forårsaket disse bruddene? (historiske hendelser)
+3. Plasserer i HISTORISK KONTEKST
+   - Hvilke historiske hendelser former disse tekstene?
+   - Hvordan endrer diskursen seg over tid?
+
+VIKTIG: 
+- Referer til KONKRETE eksempler fra kildene
+- Sammenlign kilder for å vise utviklingen
+- Skriv som en akademisk analyse, IKKE som spørsmål
+- Bruk norsk/dansk, ikke tysk (ingen "Eigenmacht" etc.)
+- Maksimalt 250 ord
 
 KILDER:
 {sources_context}
 
 SPØRSMÅL: {query}
 
-Svar i JSON-format med følgende struktur:
-{{
-  "power_dynamics": {{
-    "dominant_voices": "string",
-    "silenced_voices": ["list"],
-    "institutional_authority": ["list"]
-  }},
-  "contradictions": [
-    {{
-      "what_is_said": "string",
-      "what_is_implied": "string",
-      "tension": "string"
-    }}
-  ],
-  "epistemic_insight": {{
-    "key_finding": "string",
-    "historical_context": "string"
-  }}
-}}
-
-JSON:"""
+GENEALOGISK ANALYSE:"""
 
             # Kjør LLM
             result = pipe(
                 llm_prompt,
-                max_new_tokens=400,
-                temperature=0.5,
-                top_p=0.9,
+                max_new_tokens=500,  # Økt for lengre analyse
+                temperature=0.6,     # Litt høyere for mer flytende tekst
+                top_p=0.92,
                 do_sample=True
             )
             
-            llm_output = result[0]["generated_text"].split("JSON:")[-1].strip()
+            llm_output = result[0]["generated_text"].split("GENEALOGISK ANALYSE:")[-1].strip()
             
-            # Prøv å parse JSON
-            try:
-                # Fjern potensielle markdown-taggar
-                llm_output = re.sub(r'```json\n?|\n?```', '', llm_output).strip()
-                llm_analysis = json.loads(llm_output)
-                
-                # Legg til LLM-innsikt i genealogical_analysis
-                genealogical_analysis["llm_insight"] = {
-                    "power_dynamics": llm_analysis.get("power_dynamics", {}),
-                    "contradictions": llm_analysis.get("contradictions", []),
-                    "epistemic_insight": llm_analysis.get("epistemic_insight", {}),
-                    "method": "mistral_foucault"
-                }
-                
-                print(f"   ✅ LLM-analyse komplett: {llm_analysis.get('epistemic_insight', {}).get('key_finding', 'N/A')[:80]}...")
-                
-            except json.JSONDecodeError as e:
-                print(f"   ⚠️ Kunne ikke parse LLM JSON: {e}")
-                # Lagre raw output som fallback
-                genealogical_analysis["llm_insight"] = {
-                    "raw_output": llm_output[:500],
-                    "parse_error": str(e),
-                    "method": "mistral_foucault_raw"
-                }
-        
+            # Lagre som fritekst (ikke JSON)
+            genealogical_analysis["llm_insight"] = {
+                "analysis_text": llm_output,
+                "method": "mistral_foucault_prose",
+                "sources_analyzed": len(strata[:4])
+            }
+            
+            print(f"   ✅ LLM-analyse komplett ({len(llm_output)} tegn)")
+            
         except Exception as e:
             print(f"   ⚠️ LLM-analyse feilet: {e}")
             genealogical_analysis["llm_insight"] = {
