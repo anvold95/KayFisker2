@@ -688,48 +688,47 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
                 for i, s in enumerate(strata[:4])  # Max 4 kilder for å unngå for lang prompt
             ])
             
-            llm_prompt = f"""Du er en Foucauldiansk diskursanalytiker som analyserer Kay Fisker's arkitektoniske skrifter.
+            llm_prompt = f"""OPPGAVE: Analyser disse arkivkildene fra Kay Fisker (dansk arkitekt, 1893-1965).
 
-OPPGAVE: Skriv en SAMMENHENGENDE GENEALOGISK ANALYSE (2-3 avsnitt) som:
+VIKTIG: Du skal IKKE beskrive deg selv eller din bakgrunn. Du skal ANALYSERE KILDENE nedenfor.
 
-1. Identifiserer MAKTSTRUKTURER i materialet
-   - Hvem har autoritet til å snakke om arkitektur?
-   - Hvilke stemmer er fraværende? (kvinner, arbeidere, brukere)
-   - Hvilke institusjoner legitimerer diskursen?
+METODE: Skriv 2-3 korte avsnitt (maksimalt 200 ord totalt) som:
 
-2. Avdekker MOTSETNINGER mellom diskurs og praksis
-   - Hva sier Fisker vs. hva han faktisk bygger?
-   - Implisitte antagelser som ikke uttales eksplisitt
-   - Økonomiske/politiske tvang som former diskursen
+1. MAKTANALYSE: Hvem har stemme i disse tekstene? Hvem er fraværende? (f.eks. kvinner, arbeidere, beboere)
 
-3. Plasserer i HISTORISK KONTEKST
-   - Hvilke historiske hendelser former disse tekstene?
-   - Hvordan endrer diskursen seg over tid?
+2. MOTSETNINGER: Finn eksempler på motsetninger mellom hva Fisker SIER og hva som antydes om PRAKSIS. Referer til konkrete sitater fra kildene.
 
-VIKTIG: 
-- Referer til KONKRETE eksempler fra kildene
-- Sammenlign kilder for å vise utviklingen
-- Skriv som en akademisk analyse, IKKE som spørsmål
-- Bruk norsk/dansk, ikke tysk (ingen "Eigenmacht" etc.)
-- Maksimalt 250 ord
+3. HISTORISK KONTEKST: Hvilke historiske forhold (krig, økonomi, politikk) former disse tekstene?
 
-KILDER:
+REGLER:
+- Begynn DIREKTE med analysen - ingen introduksjon om deg selv
+- Referer til KONKRETE eksempler fra kildene nedenfor
+- Sammenlign kilder hvis mulig
+- Bruk dansk/norsk (IKKE tysk som "Eigenmacht")
+- Maksimalt 200 ord totalt
+
+BRUKERENS SPØRSMÅL: {query}
+
+ARKIVKILDER TIL ANALYSE:
 {sources_context}
 
-SPØRSMÅL: {query}
-
-GENEALOGISK ANALYSE:"""
+ANALYSE:"""
 
             # Kjør LLM
             result = pipe(
                 llm_prompt,
-                max_new_tokens=500,  # Økt for lengre analyse
-                temperature=0.6,     # Litt høyere for mer flytende tekst
-                top_p=0.92,
+                max_new_tokens=350,  # Redusert fra 500 (kortere = mer fokusert)
+                temperature=0.4,     # Lavere for mindre kreativitet/hallusinasjon
+                top_p=0.88,          # Lavere for mer deterministisk
+                repetition_penalty=1.2,  # Unngå gjentakelser
                 do_sample=True
             )
             
-            llm_output = result[0]["generated_text"].split("GENEALOGISK ANALYSE:")[-1].strip()
+            llm_output = result[0]["generated_text"].split("ANALYSE:")[-1].strip()
+            
+            # Fjern eventuelle meta-kommentarer
+            llm_output = re.sub(r'^(Jeg er|Mit navn|Jeg har studeret).*?\n\n', '', llm_output, flags=re.MULTILINE)
+            llm_output = llm_output.strip()
             
             # Lagre som fritekst (ikke JSON)
             genealogical_analysis["llm_insight"] = {
