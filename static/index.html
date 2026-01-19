@@ -297,39 +297,94 @@
                 if (genealogy && genealogy.source_attributions) {
                     const attr = genealogy.source_attributions.find(a => a.source_ref === sourceRef);
                     if (attr && attr.segments) {
-                        attributedSegments = attr.segments.map(s => s.text);
+                        attributedSegments = attr.segments.map(s => ({
+                            text: s.text,
+                            similarity: s.similarity
+                        }));
                     }
                 }
 
-                // Hvis INGEN attributions, vis placeholder
+                // Hvis INGEN attributions - blur alt
                 if (attributedSegments.length === 0) {
                     return (
-                        <div className="space-y-2">
-                            <div className="text-[11px] text-stone-400 italic blur-[2px] select-none">
-                                {fullText.substring(0, 120)}...
-                            </div>
-                            <div className="text-[9px] mono text-stone-500 pt-2 border-t border-stone-200">
-                                Ingen direkte sitater brukt fra denne kilden
-                            </div>
+                        <div className="text-[13px] text-stone-400 leading-relaxed blur-[3px] select-none pointer-events-none user-select-none">
+                            {fullText}
                         </div>
                     );
                 }
 
-                // Vis KUN de highlighted excerpts
+                // Split text into sentences
+                const sentences = fullText.split(/([.!?]+\s+)/).filter(Boolean);
+                let fullSentences = [];
+                for (let i = 0; i < sentences.length; i += 2) {
+                    fullSentences.push((sentences[i] + (sentences[i+1] || "")).trim());
+                }
+
+                // Check hver setning om den matcher et attributed segment
                 return (
-                    <div className="space-y-3">
-                        {attributedSegments.map((segment, i) => (
-                            <div key={i} className="bg-sky-50 border-l-3 border-sky-400 pl-3 py-2">
-                                <div className="text-[13px] text-stone-800 leading-relaxed">
-                                    "{segment}"
-                                </div>
-                            </div>
-                        ))}
-                        <div className="text-[9px] mono text-sky-600 pt-2">
-                            {attributedSegments.length} utdrag brukt i responsen
-                        </div>
+                    <div className="text-[13px] leading-relaxed">
+                        {fullSentences.map((sentence, i) => {
+                            // Sjekk om denne setningen inneholder noe av et attributed segment
+                            const matchingSegment = attributedSegments.find(seg => 
+                                sentence.includes(seg.text) || 
+                                seg.text.includes(sentence) ||
+                                (sentence.length > 20 && seg.text.length > 20 && 
+                                 levenshteinSimilarity(sentence, seg.text) > 0.6)
+                            );
+
+                            if (matchingSegment) {
+                                // LESELIG - brukt i responsen
+                                const isDirect = matchingSegment.similarity > 0.65;
+                                return (
+                                    <span key={i} className={`${
+                                        isDirect 
+                                            ? 'bg-sky-100 text-stone-900 font-medium border-b-2 border-sky-400' 
+                                            : 'bg-stone-50 text-stone-800 border-b border-stone-300'
+                                    } px-1 mr-1`}>
+                                        {sentence}
+                                    </span>
+                                );
+                            } else {
+                                // BLURRED - ikke brukt
+                                return (
+                                    <span key={i} className="text-stone-400 blur-[3px] select-none pointer-events-none user-select-none mr-1">
+                                        {sentence}
+                                    </span>
+                                );
+                            }
+                        })}
                     </div>
                 );
+            };
+
+            // Helper: Simple Levenshtein similarity for fuzzy matching
+            const levenshteinSimilarity = (s1, s2) => {
+                const longer = s1.length > s2.length ? s1 : s2;
+                const shorter = s1.length > s2.length ? s2 : s1;
+                if (longer.length === 0) return 1.0;
+                
+                const editDistance = (s1, s2) => {
+                    s1 = s1.toLowerCase();
+                    s2 = s2.toLowerCase();
+                    const costs = [];
+                    for (let i = 0; i <= s1.length; i++) {
+                        let lastValue = i;
+                        for (let j = 0; j <= s2.length; j++) {
+                            if (i === 0) costs[j] = j;
+                            else if (j > 0) {
+                                let newValue = costs[j - 1];
+                                if (s1.charAt(i - 1) !== s2.charAt(j - 1))
+                                    newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                                costs[j - 1] = lastValue;
+                                lastValue = newValue;
+                            }
+                        }
+                        if (i > 0) costs[s2.length] = lastValue;
+                    }
+                    return costs[s2.length];
+                };
+                
+                return (longer.length - editDistance(longer, shorter)) / longer.length;
             };
 
             const handleSubmit = () => executeGenealogicalRAG(documentText);
@@ -555,6 +610,21 @@
                         body { font-family: 'Inter', sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
                         .serif { font-family: 'Libre Baskerville', serif; }
                         .mono { font-family: 'IBM Plex Mono', monospace; }
+                        
+                        /* Prevent copying of blurred text */
+                        .select-none { 
+                            user-select: none !important; 
+                            -webkit-user-select: none !important;
+                            -moz-user-select: none !important;
+                            -ms-user-select: none !important;
+                        }
+                        .pointer-events-none {
+                            pointer-events: none !important;
+                        }
+                        .user-select-none::selection {
+                            background: transparent !important;
+                            color: inherit !important;
+                        }
                         
                         @keyframes glow-pulse { 0% { opacity: 0.08; transform: scale(1); } 50% { opacity: 0.15; transform: scale(1.05); } 100% { opacity: 0.08; transform: scale(1); } }
                         .animate-glow { animation: glow-pulse 15s ease-in-out infinite; }
