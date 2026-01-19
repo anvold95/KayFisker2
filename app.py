@@ -670,7 +670,7 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
     
     # Diskontinuiteter - BEHOLDES
     if genealogical_analysis["discursive_shifts"]["shifts"]:
-        major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]]
+        major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]
         genealogical_analysis["discontinuities"] = [{
             "year": shift["year_to"],
             "description": f"Major discursive break between {shift['year_from']} and {shift['year_to']}",
