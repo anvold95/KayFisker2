@@ -291,7 +291,7 @@
             };
 
             const getHighlightedText = (fullText, response, sourceRef) => {
-                if (!response || !fullText) return <span className="opacity-70 text-[15px]">{fullText}</span>;
+                if (!response || !fullText) return null;
                 
                 let attributedSegments = [];
                 if (genealogy && genealogy.source_attributions) {
@@ -301,31 +301,35 @@
                     }
                 }
 
-                const sentences = fullText.split(/([.!?]+)/).filter(Boolean);
-                const responseWords = response.toLowerCase().split(' ');
-                let reconstructed = [];
-                for (let i = 0; i < sentences.length; i += 2) {
-                    reconstructed.push((sentences[i] + (sentences[i+1] || "")).trim());
+                // Hvis INGEN attributions, vis placeholder
+                if (attributedSegments.length === 0) {
+                    return (
+                        <div className="space-y-2">
+                            <div className="text-[11px] text-stone-400 italic blur-[2px] select-none">
+                                {fullText.substring(0, 120)}...
+                            </div>
+                            <div className="text-[9px] mono text-stone-500 pt-2 border-t border-stone-200">
+                                Ingen direkte sitater brukt fra denne kilden
+                            </div>
+                        </div>
+                    );
                 }
 
-                return reconstructed.map((s, i) => {
-                    const isBackendAttributed = attributedSegments.some(seg => 
-                        s.includes(seg) || seg.includes(s)
-                    );
-                    const matchCount = s.toLowerCase().split(' ').filter(w => 
-                        responseWords.includes(w) && w.length > 4
-                    ).length;
-                    const isSoftActivated = matchCount > 1;
-
-                    let className = "opacity-70 text-[15px]";
-                    if (isBackendAttributed) {
-                        className = "bg-sky-100 text-black font-semibold border-b-2 border-sky-300 text-[15px]";
-                    } else if (isSoftActivated) {
-                        className = "bg-sky-50 text-black border-b border-sky-200 text-[15px]";
-                    }
-
-                    return <span key={i} className={`transition-all duration-500 mr-1 ${className}`}>{s} </span>;
-                });
+                // Vis KUN de highlighted excerpts
+                return (
+                    <div className="space-y-3">
+                        {attributedSegments.map((segment, i) => (
+                            <div key={i} className="bg-sky-50 border-l-3 border-sky-400 pl-3 py-2">
+                                <div className="text-[13px] text-stone-800 leading-relaxed">
+                                    "{segment}"
+                                </div>
+                            </div>
+                        ))}
+                        <div className="text-[9px] mono text-sky-600 pt-2">
+                            {attributedSegments.length} utdrag brukt i responsen
+                        </div>
+                    </div>
+                );
             };
 
             const handleSubmit = () => executeGenealogicalRAG(documentText);
@@ -842,15 +846,35 @@
                                                 )}
                                             </div>
                                             
+                                            {/* Metadata */}
+                                            <div className="text-[10px] mono text-stone-500 space-y-1 pb-3 border-b border-stone-200">
+                                                <div>Type: {s.type}</div>
+                                                <div>År: {s.year || 'Ukjent'}</div>
+                                                {s.excerpt_relevance && (
+                                                    <div>Relevans: {Math.round(s.excerpt_relevance * 100)}%</div>
+                                                )}
+                                            </div>
+                                            
+                                            {/* Brukte utdrag */}
                                             <div className="serif text-[15px] leading-relaxed text-stone-800">
                                                 {getHighlightedText(s.text, syntheticResponse, s.ref)}
                                             </div>
                                             
                                             {s.excerpt_explanation && (
-                                                <div className="text-[11px] text-stone-600 leading-relaxed border-l-2 border-stone-300 pl-3">
+                                                <div className="text-[10px] text-stone-600 leading-relaxed pt-3 border-t border-stone-200">
                                                     {s.excerpt_explanation}
                                                 </div>
                                             )}
+                                            
+                                            {/* Link til full kilde */}
+                                            <div className="pt-3 border-t border-stone-200">
+                                                <button className="text-[10px] mono text-sky-600 hover:text-sky-800 flex items-center gap-1">
+                                                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                    </svg>
+                                                    Åpne i arkiv
+                                                </button>
+                                            </div>
                                         </div>
                                     );
                                 })}
