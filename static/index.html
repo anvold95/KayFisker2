@@ -500,29 +500,32 @@
                     if (i === 0) return null;
                     const prev = connectedNodes[i - 1];
                     
-                    // Beregn midtpunkt for pil
                     const midX = (prev.pos.x + node.pos.x) / 2;
                     const midY = (prev.pos.y + node.pos.y) / 2;
                     
                     return (
                         <g key={`concept-${i}`}>
-                            <defs>
-                                <marker id={`arrow-${i}`} markerWidth="8" markerHeight="8" 
-                                    refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
-                                    <path d="M0,0 L0,6 L8,3 z" fill="#7e22ce" />
-                                </marker>
-                            </defs>
+                            {/* Glowing line - INGEN PIL */}
                             <line 
                                 x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
                                 x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#7e22ce" strokeWidth="2.5"
-                                strokeDasharray="6,4" opacity="0.7"
-                                markerEnd={`url(#arrow-${i})`}
+                                stroke="#0ea5e9" strokeWidth="2"
+                                strokeDasharray="6,4" opacity="0.6"
+                                className="animate-pulse"
+                            />
+                            {/* Glow effect */}
+                            <line 
+                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
+                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
+                                stroke="#0ea5e9" strokeWidth="8"
+                                opacity="0.15"
+                                className="animate-pulse"
+                                style={{ filter: 'blur(4px)' }}
                             />
                             {/* Tidslinje-indikator */}
                             <circle 
                                 cx={`${midX}%`} cy={`${midY}%`} r="3"
-                                fill="#a855f7" opacity="0.8"
+                                fill="#0ea5e9" opacity="0.7"
                             />
                         </g>
                     );
@@ -640,6 +643,13 @@
                             ))}
                         </div>
 
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-5" 
+                            style={{ filter: showGenealogy ? 'none' : 'blur(2px) opacity(0.3)' }}>
+                            {/* GENEALOGISKE LINJER - Alltid bak alt annet */}
+                            {renderDiscursiveShifts()}
+                            {renderConceptConnections()}
+                        </svg>
+
                         <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
                             {visualNodes.map((v, i) => ( 
                                 <path key={`vis-link-${i}`} 
@@ -648,9 +658,6 @@
                                     className="visual-line opacity-50" 
                                 /> 
                             ))}
-                            
-                            {showGenealogy && renderDiscursiveShifts()}
-                            {showGenealogy && renderConceptConnections()}
                             
                             {selectedSources.length > 1 && selectedSources.map((s, i) => {
                                 const next = selectedSources[i + 1];
@@ -671,7 +678,18 @@
                             {activeStrata.map((s, i) => {
                                 const isSelected = selectedSources.find(ss => ss.id === s.id);
                                 const isDragging = draggedNode === s.id;
-                                const isDimmed = selectedSources.length > 0 && !isSelected;
+                                
+                                // Sjekk om noden er del av genealogien
+                                const isInGenealogy = showGenealogy && (
+                                    genealogy?.discursive_shifts?.shifts?.some(shift => 
+                                        shift.source_a === s.ref || shift.source_b === s.ref
+                                    ) ||
+                                    (selectedConcept && genealogy?.concept_genealogies?.[selectedConcept]?.occurrences?.some(
+                                        occ => occ.source_id === s.id
+                                    ))
+                                );
+                                
+                                const isDimmed = (selectedSources.length > 0 && !isSelected) || (showGenealogy && !isInGenealogy && !isSelected);
                                 const attribution = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                 const hasAttribution = attribution && attribution.segments && attribution.segments.length > 0;
                                 
@@ -749,8 +767,8 @@
 
                     {/* ORGANISK GENEALOGY SIDEBAR */}
                     {(selectedSources.length > 0 || showGenealogy) && (
-                        <aside className="fixed right-0 top-12 bottom-0 w-[520px] bg-stone-50 border-l border-stone-200 z-40 overflow-y-auto flex flex-col shadow-xl">
-                            <header className="p-6 border-b border-stone-200 sticky top-0 z-10 backdrop-blur-md bg-stone-50/95">
+                        <aside className="fixed right-0 top-12 bottom-0 w-[520px] bg-white/70 backdrop-blur-xl border-l border-white/40 z-40 overflow-y-auto flex flex-col shadow-2xl">
+                            <header className="p-6 border-b border-white/40 sticky top-0 z-10 backdrop-blur-xl bg-white/80">
                                 <div className="flex justify-between items-center mb-3">
                                     <div>
                                         <h2 className="text-[13px] font-bold text-stone-800 mb-1">
@@ -1030,97 +1048,30 @@
                                             </div>
                                         )}
                                         
-                                        {/* 🆕 LLM GENEALOGISK INNSIKT */}
-                                        {genealogy.llm_insight && !genealogy.llm_insight.error && (
+                                        {/* LLM GENEALOGISK ANALYSE - Sammenhengende tekst */}
+                                        {genealogy.llm_insight && genealogy.llm_insight.analysis_text && (
                                             <div className="space-y-4">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
-                                                    <div className="w-1 h-4 bg-violet-600"></div>
+                                                    <div className="w-1 h-4 bg-sky-600"></div>
                                                     Genealogisk Lesning
-                                                    <span className="text-[8px] mono text-violet-600 ml-auto">AI-analyse</span>
+                                                    <span className="text-[8px] mono text-sky-600 ml-auto">AI-analyse</span>
                                                 </h3>
                                                 
-                                                {/* Maktstrukturer */}
-                                                {genealogy.llm_insight.power_dynamics && (
-                                                    <div className="genealogy-note p-4 rounded-sm space-y-3">
-                                                        <div className="text-[10px] font-bold text-violet-900 mono mb-2">
-                                                            🎭 MAKTSTRUKTURER
-                                                        </div>
-                                                        
-                                                        {genealogy.llm_insight.power_dynamics.dominant_voices && (
-                                                            <div>
-                                                                <div className="text-[9px] mono text-stone-500 mb-1">Dominerende stemmer:</div>
-                                                                <div className="text-[11px] text-stone-700 leading-relaxed">
-                                                                    {genealogy.llm_insight.power_dynamics.dominant_voices}
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        
-                                                        {genealogy.llm_insight.power_dynamics.silenced_voices?.length > 0 && (
-                                                            <div>
-                                                                <div className="text-[9px] mono text-stone-500 mb-1">Marginaliserte stemmer:</div>
-                                                                <div className="flex flex-wrap gap-1">
-                                                                    {genealogy.llm_insight.power_dynamics.silenced_voices.map((voice, i) => (
-                                                                        <span key={i} className="text-[10px] px-2 py-1 bg-stone-100 text-stone-700 rounded">
-                                                                            {voice}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        
-                                                        {genealogy.llm_insight.power_dynamics.institutional_authority?.length > 0 && (
-                                                            <div>
-                                                                <div className="text-[9px] mono text-stone-500 mb-1">Institusjoner referert:</div>
-                                                                <div className="flex flex-wrap gap-1">
-                                                                    {genealogy.llm_insight.power_dynamics.institutional_authority.map((inst, i) => (
-                                                                        <span key={i} className="text-[10px] px-2 py-1 bg-violet-50 text-violet-700 rounded">
-                                                                            {inst}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                                
-                                                {/* Motsetninger */}
-                                                {genealogy.llm_insight.contradictions?.length > 0 && (
-                                                    <div className="space-y-2">
-                                                        <div className="text-[10px] font-bold text-violet-900 mono mb-2">
-                                                            ⚡ DISKURS vs. PRAKSIS
-                                                        </div>
-                                                        {genealogy.llm_insight.contradictions.map((contra, i) => (
-                                                            <div key={i} className="genealogy-note p-4 rounded-sm bg-amber-50/30 border-l-2 border-amber-400">
-                                                                <div className="text-[11px] text-stone-700 mb-2">
-                                                                    <span className="font-semibold">Diskurs:</span> {contra.what_is_said}
-                                                                </div>
-                                                                <div className="text-[11px] text-stone-700 mb-2">
-                                                                    <span className="font-semibold">Praksis:</span> {contra.what_is_implied}
-                                                                </div>
-                                                                <div className="text-[10px] text-amber-700 italic">
-                                                                    → {contra.tension}
-                                                                </div>
-                                                            </div>
+                                                <div className="bg-white/60 backdrop-blur-sm p-5 rounded-sm border border-sky-200/50 shadow-sm">
+                                                    <div className="text-[13px] text-stone-800 leading-relaxed serif space-y-3">
+                                                        {genealogy.llm_insight.analysis_text.split('\n\n').map((paragraph, i) => (
+                                                            <p key={i} className="text-stone-700">
+                                                                {paragraph}
+                                                            </p>
                                                         ))}
                                                     </div>
-                                                )}
-                                                
-                                                {/* Epistemisk innsikt */}
-                                                {genealogy.llm_insight.epistemic_insight && (
-                                                    <div className="genealogy-note p-4 rounded-sm bg-violet-50/30">
-                                                        <div className="text-[10px] font-bold text-violet-900 mono mb-3">
-                                                            💡 NØKKELINNSIKT
+                                                    
+                                                    {genealogy.llm_insight.sources_analyzed && (
+                                                        <div className="mt-4 pt-3 border-t border-sky-100 text-[9px] mono text-sky-600">
+                                                            Basert på {genealogy.llm_insight.sources_analyzed} kilder
                                                         </div>
-                                                        <div className="text-[12px] text-stone-700 leading-relaxed mb-3">
-                                                            {genealogy.llm_insight.epistemic_insight.key_finding}
-                                                        </div>
-                                                        {genealogy.llm_insight.epistemic_insight.historical_context && (
-                                                            <div className="text-[11px] text-stone-600 italic pt-2 border-t border-violet-200">
-                                                                Historisk kontekst: {genealogy.llm_insight.epistemic_insight.historical_context}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
+                                                    )}
+                                                </div>
                                             </div>
                                         )}
                                     </>
