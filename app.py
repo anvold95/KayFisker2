@@ -304,9 +304,9 @@ def extract_most_relevant_excerpt(source_text: str, response_text: str, min_word
         "explanation": explanation
     }
 
-def find_attributable_segments(source_text: str, response_text: str, threshold: float = 0.60) -> list:
+def find_attributable_segments(source_text: str, response_text: str, threshold: float = 0.50) -> list:
     """
-    ENDA STRENGERE segment-matching (threshold 0.60) for å unngå false positives.
+    JUSTERT threshold 0.50 (var 0.60) for å unngå false negatives.
     Finner KUN segmenter som FAKTISK bidrar direkte til responsen.
     """
     if not embedder:
@@ -551,9 +551,9 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
             avg_similarity = sum(seg["similarity"] for seg in attributed) / len(attributed)
             
             # STRENGERE epistemisk vurdering
-            if avg_similarity > 0.72:  # Økt fra 0.70
+            if avg_similarity > 0.68:  # Litt lavere (var 0.72)
                 level = "ARKIVFAKTA"
-            elif avg_similarity > 0.62:  # Økt fra 0.58
+            elif avg_similarity > 0.55:  # Litt lavere (var 0.62)
                 level = "ARKIV-NÆR"
             else:
                 level = "PRAKSISBASERT"
