@@ -91,7 +91,7 @@
                 const baseDepth = 15 + Math.min((age / 100) * 60, 60);
                 
                 // Forbudt område (svarsboks)
-                const forbiddenZone = { xMin: 10, xMax: 90, yMin: 60, yMax: 100 };
+                const forbiddenZone = { xMin: 10, xMax: 90, yMin: 65, yMax: 100 };
                 const minDistance = 30; // Minimum avstand mellom noder ved spawning
                 
                 const isValidPosition = (x, y) => {
@@ -99,8 +99,8 @@
                     if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
                         y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) return false;
                     
-                    // Hard reject på kanter
-                    if (x < 5 || x > 95 || y < 5 || y > 58) return false;
+                    // Viewport boundaries (ikke for strenge)
+                    if (x < 3 || x > 97 || y < 3 || y > 72) return false;
                     
                     // VIKTIG: Sjekk at vi ikke spawner oppå andre noder
                     for (const node of allNodes) {
@@ -123,8 +123,8 @@
                     }
                 }
                 
-                // Grid search
-                for (let y = 8; y <= 55; y += 8) {
+                // Grid search - STØRRE område
+                for (let y = 8; y <= 70; y += 8) {
                     for (let x = 8; x <= 92; x += 8) {
                         if (isValidPosition(x, y)) return { x, y };
                     }
@@ -364,13 +364,12 @@
                         const REPULSION_DIST = 32; // Større "magnetfelt"
                         const REPULSION_STRENGTH = 0.4; // ENDA KRAFTIGERE (var 0.25)
                         const FORBIDDEN_REPULSION = 0.8; // Sterkere dytt fra chatboks
-                        const EDGE_REPULSION = 0.3; // Dytt fra kanter
+                        const EDGE_REPULSION = 0.5; // STERKERE dytt fra kanter
                         
                         // Chatboks område - MER PRESIST
-                        // Chatboksen starter ca ved y=65% og dekker x=20-80%
                         const chatBoxZone = { 
-                            xMin: 18, xMax: 82,  // Litt margin på sidene
-                            yMin: 62, yMax: 100  // Fra ca der inputboksen starter
+                            xMin: 18, xMax: 82,
+                            yMin: 65, yMax: 100  // Justert til 65
                         };
                         
                         for (let i = 0; i < nextNodes.length; i++) {
@@ -383,8 +382,6 @@
                             if (nodeA.pos.y > chatBoxZone.yMin - 5 && 
                                 nodeA.pos.x > chatBoxZone.xMin && 
                                 nodeA.pos.x < chatBoxZone.xMax) {
-                                // Dytt kraftig oppover og litt til siden
-                                const centerDist = Math.abs(nodeA.pos.x - 50);
                                 const sideForce = (nodeA.pos.x > 50 ? 1 : -1) * 0.2;
                                 
                                 nodeA.pos.y -= FORBIDDEN_REPULSION;
@@ -392,8 +389,8 @@
                                 hasMovement = true;
                             }
 
-                            // REPULSION FRA KANTER (soft boundaries)
-                            const MARGIN = 8;
+                            // SOFT REPULSION FRA KANTER - ikke hard boundaries
+                            const MARGIN = 5;
                             if (nodeA.pos.x < MARGIN) {
                                 nodeA.pos.x += EDGE_REPULSION * (MARGIN - nodeA.pos.x);
                                 hasMovement = true;
@@ -406,8 +403,8 @@
                                 nodeA.pos.y += EDGE_REPULSION * (MARGIN - nodeA.pos.y);
                                 hasMovement = true;
                             }
-                            if (nodeA.pos.y > 60 - MARGIN) { // Øvre grense for chatboks
-                                nodeA.pos.y -= EDGE_REPULSION * (nodeA.pos.y - (60 - MARGIN));
+                            if (nodeA.pos.y > 72 - MARGIN) { // Økt til 72
+                                nodeA.pos.y -= EDGE_REPULSION * (nodeA.pos.y - (72 - MARGIN));
                                 hasMovement = true;
                             }
 
@@ -416,7 +413,6 @@
                                 if (i === j) continue;
                                 const nodeB = nextNodes[j];
 
-                                // Vektet avstand (bredere bokser)
                                 const dx = (nodeA.pos.x - nodeB.pos.x) * 1.6; 
                                 const dy = nodeA.pos.y - nodeB.pos.y;
                                 const distance = Math.sqrt(dx * dx + dy * dy);
@@ -433,11 +429,11 @@
                                 }
                             }
 
-                            // HARD BOUNDARY CONSTRAINTS (fallback)
-                            if (nodeA.pos.x < 5) nodeA.pos.x = 5;
-                            if (nodeA.pos.x > 95) nodeA.pos.x = 95;
-                            if (nodeA.pos.y < 5) nodeA.pos.y = 5;
-                            if (nodeA.pos.y > 60) nodeA.pos.y = 60; // Hard stop ved chatboks
+                            // HARD BOUNDARY CONSTRAINTS (kun som fallback)
+                            if (nodeA.pos.x < 2) nodeA.pos.x = 2;
+                            if (nodeA.pos.x > 98) nodeA.pos.x = 98;
+                            if (nodeA.pos.y < 2) nodeA.pos.y = 2;
+                            if (nodeA.pos.y > 72) nodeA.pos.y = 72; // Økt til 72
                         }
 
                         return hasMovement ? nextNodes : currentNodes;
@@ -505,27 +501,45 @@
                     
                     return (
                         <g key={`concept-${i}`}>
-                            {/* Glowing line - INGEN PIL */}
+                            {/* Hoved-linje */}
                             <line 
                                 x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
                                 x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="2"
-                                strokeDasharray="6,4" opacity="0.6"
-                                className="animate-pulse"
+                                stroke="#0ea5e9" strokeWidth="1.5"
+                                strokeDasharray="6,4" opacity="0.4"
                             />
-                            {/* Glow effect */}
+                            {/* Animert puls som beveger seg langs linjen */}
                             <line 
                                 x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
                                 x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="8"
-                                opacity="0.15"
-                                className="animate-pulse"
+                                stroke="#0ea5e9" strokeWidth="3"
+                                strokeDasharray="20,200" 
+                                opacity="0.6"
+                                style={{ 
+                                    filter: 'blur(2px)',
+                                    animation: `dash-flow-${i} 3s linear infinite`
+                                }}
+                            />
+                            <style>{`
+                                @keyframes dash-flow-${i} {
+                                    0% { stroke-dashoffset: 220; opacity: 0; }
+                                    10% { opacity: 0.8; }
+                                    90% { opacity: 0.8; }
+                                    100% { stroke-dashoffset: 0; opacity: 0; }
+                                }
+                            `}</style>
+                            {/* Subtil glow - ikke overveldende */}
+                            <line 
+                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
+                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
+                                stroke="#0ea5e9" strokeWidth="6"
+                                opacity="0.08"
                                 style={{ filter: 'blur(4px)' }}
                             />
                             {/* Tidslinje-indikator */}
                             <circle 
-                                cx={`${midX}%`} cy={`${midY}%`} r="3"
-                                fill="#0ea5e9" opacity="0.7"
+                                cx={`${midX}%`} cy={`${midY}%`} r="2.5"
+                                fill="#0ea5e9" opacity="0.6"
                             />
                         </g>
                     );
@@ -704,12 +718,13 @@
                                         onMouseLeave={() => setHoveredSource(null)}
                                         className={`source-node absolute p-6 w-[290px] pointer-events-auto bg-white/40 backdrop-blur-xl border-l-4 border border-white/30 ${
                                             isDragging ? 'dragging' : ''
-                                        } ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected ? 'active' : 'shadow-sm'}`} 
+                                        } ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected || isInGenealogy ? 'active' : 'shadow-sm'}`} 
                                         style={{ 
                                             left: `${s.pos.x}%`, top: `${s.pos.y}%`, 
                                             transform: 'translate(-50%, -50%)', 
-                                            borderColor: (hoveredSource === s.id || isSelected) ? s.color : 'rgba(0,0,0,0.05)',
-                                            cursor: isDragging ? 'grabbing' : 'move'
+                                            borderColor: (hoveredSource === s.id || isSelected || isInGenealogy) ? s.color : 'rgba(0,0,0,0.05)',
+                                            cursor: isDragging ? 'grabbing' : 'move',
+                                            boxShadow: isInGenealogy && !isSelected ? '0 8px 25px rgba(14, 165, 233, 0.3)' : undefined
                                         }}>
                                         <div className="flex justify-between items-center mb-3">
                                             <span className="text-[10px] mono font-medium uppercase tracking-wider" style={{ color: s.color }}>
@@ -811,7 +826,7 @@
                                 {selectedSources.length > 0 && selectedSources.map((s, i) => {
                                     const attr = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                     return (
-                                        <div key={s.id} className="genealogy-note p-5 rounded-sm space-y-4">
+                                        <div key={s.id} className="bg-white/60 backdrop-blur-md p-5 rounded-sm border border-white/40 shadow-sm space-y-4">
                                             <div className="flex items-start justify-between">
                                                 <div>
                                                     <div className="text-[10px] mono font-medium text-stone-600 mb-1">{s.type}</div>
@@ -866,8 +881,8 @@
                                                                 } shadow-md`}></div>
                                                                 
                                                                 {/* Content card */}
-                                                                <div className={`genealogy-note p-4 rounded-sm ${
-                                                                    isMajor ? 'border-l-4 border-stone-800' : 'border-l-2 border-stone-400'
+                                                                <div className={`bg-white/60 backdrop-blur-md p-4 rounded-sm border shadow-sm ${
+                                                                    isMajor ? 'border-stone-800/30 border-l-4' : 'border-stone-400/20 border-l-2'
                                                                 }`}>
                                                                     <div className="flex items-baseline gap-2 mb-2">
                                                                         <span className="text-[13px] font-bold text-stone-900 mono">
@@ -925,7 +940,7 @@
                                                             <div className="absolute -left-5 top-2 w-4 h-4 rounded-full border-2 border-white bg-sky-600 shadow-md"></div>
                                                             
                                                             {/* Content card */}
-                                                            <div className="genealogy-note p-4 rounded-sm border-l-2 border-sky-300">
+                                                            <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-sky-200/40 shadow-sm border-l-2">
                                                                 <div className="text-[12px] font-bold text-sky-900 mono mb-2">
                                                                     {occ.year}
                                                                 </div>
@@ -942,7 +957,7 @@
                                                 
                                                 {/* Semantic drift summary */}
                                                 {genealogy.concept_genealogies[selectedConcept].semantic_drift?.length > 0 && (
-                                                    <div className="genealogy-note p-4 rounded-sm bg-sky-50/50">
+                                                    <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-sky-200/40 shadow-sm">
                                                         <div className="text-[10px] font-bold text-sky-900 mono mb-3">
                                                             Semantisk bevegelse
                                                         </div>
@@ -976,7 +991,7 @@
                                                     Kildefordeling
                                                 </h3>
                                                 
-                                                <div className="genealogy-note p-4 rounded-sm space-y-3">
+                                                <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-white/40 shadow-sm space-y-3">
                                                     {/* Visual bars */}
                                                     <div className="space-y-2">
                                                         <div>
