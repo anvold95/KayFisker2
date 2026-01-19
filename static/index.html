@@ -361,12 +361,17 @@
                             velocity: { x: 0, y: 0 }
                         }));
 
-                        const REPULSION_DIST = 30; // Avstand i prosent
-                        const REPULSION_STRENGTH = 0.25; // MYE KRAFTIGERE (var 0.06)
-                        const FORBIDDEN_REPULSION = 0.5; // Ekstra kraft vekk fra svarboks
+                        const REPULSION_DIST = 32; // Større "magnetfelt"
+                        const REPULSION_STRENGTH = 0.4; // ENDA KRAFTIGERE (var 0.25)
+                        const FORBIDDEN_REPULSION = 0.8; // Sterkere dytt fra chatboks
+                        const EDGE_REPULSION = 0.3; // Dytt fra kanter
                         
-                        // Forbudt område (svarsboks)
-                        const forbiddenZone = { xMin: 10, xMax: 90, yMin: 60, yMax: 100 };
+                        // Chatboks område - MER PRESIST
+                        // Chatboksen starter ca ved y=65% og dekker x=20-80%
+                        const chatBoxZone = { 
+                            xMin: 18, xMax: 82,  // Litt margin på sidene
+                            yMin: 62, yMax: 100  // Fra ca der inputboksen starter
+                        };
                         
                         for (let i = 0; i < nextNodes.length; i++) {
                             const nodeA = nextNodes[i];
@@ -374,10 +379,35 @@
                             // Dragged node skal ikke påvirkes
                             if (nodeA.id === draggedNode) continue;
 
-                            // REPULSION FRA SVARBOKS
-                            if (nodeA.pos.y > 55 && nodeA.pos.x > forbiddenZone.xMin && nodeA.pos.x < forbiddenZone.xMax) {
-                                // Dytt kraftig oppover
+                            // KRAFTIG REPULSION FRA CHATBOKS
+                            if (nodeA.pos.y > chatBoxZone.yMin - 5 && 
+                                nodeA.pos.x > chatBoxZone.xMin && 
+                                nodeA.pos.x < chatBoxZone.xMax) {
+                                // Dytt kraftig oppover og litt til siden
+                                const centerDist = Math.abs(nodeA.pos.x - 50);
+                                const sideForce = (nodeA.pos.x > 50 ? 1 : -1) * 0.2;
+                                
                                 nodeA.pos.y -= FORBIDDEN_REPULSION;
+                                nodeA.pos.x += sideForce;
+                                hasMovement = true;
+                            }
+
+                            // REPULSION FRA KANTER (soft boundaries)
+                            const MARGIN = 8;
+                            if (nodeA.pos.x < MARGIN) {
+                                nodeA.pos.x += EDGE_REPULSION * (MARGIN - nodeA.pos.x);
+                                hasMovement = true;
+                            }
+                            if (nodeA.pos.x > 100 - MARGIN) {
+                                nodeA.pos.x -= EDGE_REPULSION * (nodeA.pos.x - (100 - MARGIN));
+                                hasMovement = true;
+                            }
+                            if (nodeA.pos.y < MARGIN) {
+                                nodeA.pos.y += EDGE_REPULSION * (MARGIN - nodeA.pos.y);
+                                hasMovement = true;
+                            }
+                            if (nodeA.pos.y > 60 - MARGIN) { // Øvre grense for chatboks
+                                nodeA.pos.y -= EDGE_REPULSION * (nodeA.pos.y - (60 - MARGIN));
                                 hasMovement = true;
                             }
 
@@ -387,7 +417,7 @@
                                 const nodeB = nextNodes[j];
 
                                 // Vektet avstand (bredere bokser)
-                                const dx = (nodeA.pos.x - nodeB.pos.x) * 1.5; 
+                                const dx = (nodeA.pos.x - nodeB.pos.x) * 1.6; 
                                 const dy = nodeA.pos.y - nodeB.pos.y;
                                 const distance = Math.sqrt(dx * dx + dy * dy);
 
@@ -403,16 +433,16 @@
                                 }
                             }
 
-                            // Boundary constraints
+                            // HARD BOUNDARY CONSTRAINTS (fallback)
                             if (nodeA.pos.x < 5) nodeA.pos.x = 5;
                             if (nodeA.pos.x > 95) nodeA.pos.x = 95;
                             if (nodeA.pos.y < 5) nodeA.pos.y = 5;
-                            if (nodeA.pos.y > 58) nodeA.pos.y = 58; // Undgå svarboks
+                            if (nodeA.pos.y > 60) nodeA.pos.y = 60; // Hard stop ved chatboks
                         }
 
                         return hasMovement ? nextNodes : currentNodes;
                     });
-                }, 30); // Økt til ~33 fps (var 40ms)
+                }, 25); // Enda raskere - ~40 fps
 
                 return () => clearInterval(simulationLoop);
             }, [draggedNode, activeStrata.length]);
