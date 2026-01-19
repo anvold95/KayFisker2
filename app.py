@@ -636,13 +636,14 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
 def perform_full_genealogical_analysis(strata: list, response_text: str, query: str) -> dict:
     """
     KOMBINERT: Epistemisk analyse + Foucauldiansk genealogisk analyse
+    NYT: Bruker Mistral LLM for dypere genealogisk innsikt
     """
     print("\n🔬 Utfører fullstendig genealogisk-epistemisk analyse...")
     
-    # EPISTEMISK ANALYSE (fra v.9.9)
+    # EPISTEMISK ANALYSE (fra v.9.9) - BEHOLDES
     epistemic_analysis = analyze_source_relations(strata, response_text, query)
     
-    # GENEALOGISK ANALYSE (fra v.10.0)
+    # GENEALOGISK ANALYSE (fra v.10.0) - BEHOLDES
     genealogical_analysis = {
         "discursive_shifts": detect_discursive_shifts(strata),
         "concept_genealogies": {},
@@ -651,12 +652,12 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
         "discontinuities": []
     }
     
-    # Spor ALLE genealogiske begreper som finnes i kildene
+    # Spor ALLE genealogiske begreper - BEHOLDES
     for concept in GENEALOGICAL_CONCEPTS:
         if any(concept.lower() in s["text"].lower() for s in strata):
             genealogical_analysis["concept_genealogies"][concept] = trace_concept_genealogy(strata, concept)
     
-    # Temporal fordeling
+    # Temporal fordeling - BEHOLDES
     years = [int(s["year"]) for s in strata if s.get("year")]
     if years:
         genealogical_analysis["temporal_distribution"] = {
@@ -667,16 +668,114 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
             "decade_distribution": dict(Counter([y // 10 * 10 for y in years]))
         }
     
-    # Identifiser DISKONTINUITETER
+    # Diskontinuiteter - BEHOLDES
     if genealogical_analysis["discursive_shifts"]["shifts"]:
-        major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]
+        major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]]
         genealogical_analysis["discontinuities"] = [{
             "year": shift["year_to"],
             "description": f"Major discursive break between {shift['year_from']} and {shift['year_to']}",
             "magnitude": shift["distance"]
         } for shift in major_shifts]
     
-    # KOMBINER begge analyser
+    # 🆕 LLM-BASERT DYPERE GENEALOGISK ANALYSE
+    if pipe and len(strata) >= 2:
+        try:
+            print("   🤖 Utfører LLM-basert Foucauldiansk lesning...")
+            
+            # Bygg kontekst for LLM
+            sources_context = "\n\n---\n\n".join([
+                f"KILDE {i+1} ({s['year']}): {s['text'][:500]}"
+                for i, s in enumerate(strata[:4])  # Max 4 kilder for å unngå for lang prompt
+            ])
+            
+            llm_prompt = f"""Du er en Foucauldiansk diskursanalytiker som analyserer arkitekthistoriske kilder.
+
+OPPGAVE: Analyser disse tekstene fra Kay Fisker og identifiser:
+
+1. MAKTSTRUKTURER
+   - Hvem snakker? Hvilke stemmer dominerer?
+   - Hvilke stemmer er FRAVÆRENDE eller marginalisert?
+   - Hvilke institusjoner legitimerer utsagnene?
+
+2. PRAKSIS vs. DISKURS
+   - Er det MOTSETNINGER mellom hva som sies og hva som gjøres?
+   - Implisitte antagelser som ligger UNDER teksten?
+
+3. EPISTEMISKE BRUDD
+   - Er det fundamentale SKIFT i hvordan begreper brukes?
+   - Hva kan ha forårsaket disse bruddene? (historiske hendelser)
+
+KILDER:
+{sources_context}
+
+SPØRSMÅL: {query}
+
+Svar i JSON-format med følgende struktur:
+{{
+  "power_dynamics": {{
+    "dominant_voices": "string",
+    "silenced_voices": ["list"],
+    "institutional_authority": ["list"]
+  }},
+  "contradictions": [
+    {{
+      "what_is_said": "string",
+      "what_is_implied": "string",
+      "tension": "string"
+    }}
+  ],
+  "epistemic_insight": {{
+    "key_finding": "string",
+    "historical_context": "string"
+  }}
+}}
+
+JSON:"""
+
+            # Kjør LLM
+            result = pipe(
+                llm_prompt,
+                max_new_tokens=400,
+                temperature=0.5,
+                top_p=0.9,
+                do_sample=True
+            )
+            
+            llm_output = result[0]["generated_text"].split("JSON:")[-1].strip()
+            
+            # Prøv å parse JSON
+            try:
+                # Fjern potensielle markdown-taggar
+                llm_output = re.sub(r'```json\n?|\n?```', '', llm_output).strip()
+                llm_analysis = json.loads(llm_output)
+                
+                # Legg til LLM-innsikt i genealogical_analysis
+                genealogical_analysis["llm_insight"] = {
+                    "power_dynamics": llm_analysis.get("power_dynamics", {}),
+                    "contradictions": llm_analysis.get("contradictions", []),
+                    "epistemic_insight": llm_analysis.get("epistemic_insight", {}),
+                    "method": "mistral_foucault"
+                }
+                
+                print(f"   ✅ LLM-analyse komplett: {llm_analysis.get('epistemic_insight', {}).get('key_finding', 'N/A')[:80]}...")
+                
+            except json.JSONDecodeError as e:
+                print(f"   ⚠️ Kunne ikke parse LLM JSON: {e}")
+                # Lagre raw output som fallback
+                genealogical_analysis["llm_insight"] = {
+                    "raw_output": llm_output[:500],
+                    "parse_error": str(e),
+                    "method": "mistral_foucault_raw"
+                }
+        
+        except Exception as e:
+            print(f"   ⚠️ LLM-analyse feilet: {e}")
+            genealogical_analysis["llm_insight"] = {
+                "error": str(e),
+                "method": "failed"
+            }
+    
+    # KOMBINER alle analyser - BEHOLDES + UTVIDES
     combined = {
         **epistemic_analysis,
         **genealogical_analysis
