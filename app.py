@@ -82,25 +82,6 @@ GENEALOGICAL_CONCEPTS = [
     "standardisering", "industrialisering", "håndværk", "præfabrikation"
 ]
 
-# --- NYT: KJENTE ARKITEKTER FOR ATTRIBUTION CHECKING ---
-KNOWN_ARCHITECTS = [
-    "ivar bentsen", "thorkild henningsen", "c.f. møller", "poul baumann",
-    "ebbe clemmensen", "gunnar garde", "albert gehrke hansen", "erik glud",
-    "karen margrethe grønsen", "jørgen grønborg hansen", "hans hannibal",
-    "knud hansen møller", "ove hove", "jens høhne", "carl hylling larsen",
-    "henning jacobsen", "haberg jensen", "hans jensen", "marius johansen",
-    "poul jochum-sen", "hack kampmann", "arne kjer", "jens kjer", 
-    "kjeld kjeldsen", "ole kornerup bang", "kai kørbing", "mogens leth",
-    "mogens lilit", "svend lindholm", "jens malling nielsen", "jørgen maahr",
-    "holger mygind", "ib megelwang nielsen", "kai børge nielsen",
-    "henning noes petersen", "carl kristen nordskov", "aage paludan",
-    "mogens black petersen", "mogens petterson", "niels ole poulsen",
-    "max bøje rasmussen", "niels jacob rasmussen", "knud rohbrandt",
-    "bent salicath", "flemming schüler", "kjærtan sigurdsson", 
-    "wendelboe jensen", "jørgen bo", "frederik boyesen", "sven boyesen",
-    "kai christensen", "vagn christensen", "otto frankild", "hans frederiksen"
-]
-
 # --- MODELL-LASTING ---
 def load_model_logic():
     global pipe, tts, tokenizer, embedder, reranker, pinecone_index
@@ -182,47 +163,31 @@ def normalize_orthography(txt: str) -> str:
     return txt
 
 def enhance_query(user_prompt: str) -> str:
-    """
-    MINIMAL expansion - trust the embedder for semantic matching.
-    Kun konkrete værker får spesifikk expansion.
-    """
+    """Utvider query basert på intensjonsdeteksjon og nøkkelverk"""
     prompt_lower = user_prompt.lower()
     
-    # BARE konkrete byggværker
     works_map = {
-        "vestersøhus": "Vestersøhus Vester Søgade 1935 boligblokk Kay Fisker",
-        "dronningegården": "Dronningegården Dronningens Tværgade 1943 Kay Fisker",
-        "vigerslev": "Vigerslev Allé Ivar Bentsen rækkehuse boligbyggeri",
-        "aarhus universitet": "Aarhus Universitet hovedbygning C.F. Møller Kay Fisker",
-        "hornbækhus": "Hornbækhus 1923 landsted villa Kay Fisker",
-        "bakkehus": "Bakkehusene Ivar Bentsen Thorkild Henningsen rækkehuse",
+        "vestersøhus": "Vestersøhus Kay Fisker Vester Søgade København 1935",
+        "dronningegården": "Dronningegården Kay Fisker Dronningens Tværgade",
+        "gullfoss": "Gullfosshus Kay Fisker Artillerivej",
+        "gullfosshus": "Gullfosshus Kay Fisker Artillerivej",
+        "aarhus universitet": "Aarhus Universitet bygninger Kay Fisker C.F. Møller",
+        "statsprøveanstalten": "Statsprøveanstalten Kay Fisker Amager Boulevard"
     }
-    
+
     for work, expansion in works_map.items():
         if work in prompt_lower:
-            print(f"   🎯 Konkret værk detekteret: {work}")
-            return expansion
+            return f"{expansion} {user_prompt}"
+
+    is_biographical = any(w in prompt_lower for w in ["hvem", "hvad", "når", "hvor", "liv", "karriere"])
+    is_theoretical = any(w in prompt_lower for w in ["hvorfor", "hvordan", "prinsipper", "teori", "tanker"])
     
-    # Alt annet: Minimal expansion
-    if "kay fisker" not in prompt_lower and "fisker" not in prompt_lower:
-        return f"Kay Fisker {user_prompt}"
+    if is_biographical:
+        return f"Kay Fisker biografi liv karriere {user_prompt}"
+    elif is_theoretical:
+        return f"arkitektonisk teori princip filosofi {user_prompt}"
     
-    return user_prompt
-```
-
-**Test på dine queries:**
-```
-"Hvad kendetegner dit arbejde med rækkehuse?"
-→ "Kay Fisker Hvad kendetegner dit arbejde med rækkehuse?"
-→ Embedder matcher semantisk med rækkehus-kilder ✅
-
-"Hvad kendetegner dit arbejde med teglsten?"
-→ "Kay Fisker Hvad kendetegner dit arbejde med teglsten?"
-→ Embedder matcher semantisk med tegl-kilder ✅
-
-"Fortæl om Vestersøhus"
-→ "Vestersøhus Vester Søgade 1935 boligblokk Kay Fisker"
-→ Pinecone får konkrete søketermer ✅
+    return f"arkitektur Kay Fisker {user_prompt}"
 
 def extract_temporal_context(user_prompt: str, timeline: str) -> str:
     """Henter relevante timeline-segmenter basert på query"""
@@ -261,85 +226,11 @@ def extract_visuals(text: str) -> list:
             found.append({"keyword": key, "url": data["url"], "type": data["type"]})
     return found
 
-# --- NYT: ATTRIBUTION ERROR DETECTION ---
-def check_attribution_errors(response_text: str, source_texts: list) -> list:
-    """
-    NYT v10.5: Detekterer om Kay Fisker attributerer andres projekter til sig selv
-    """
-    warnings = []
-    
-    # Finn alle "jeg"/"mit" claims i responsen
-    my_claims_pattern = r'(mit|mine|jeg\s+har|jeg\s+projekterede|jeg\s+byggede|jeg\s+tegnede|jeg\s+arbejdede\s+med)\s+([^.!?]{10,80})'
-    my_claims = re.findall(my_claims_pattern, response_text.lower())
-    
-    if not my_claims:
-        return []
-    
-    print(f"   🔍 Sjekker {len(my_claims)} 'jeg/mit' claims for attribution errors...")
-    
-    for claim_type, claim_content in my_claims:
-        # Sjekk om claim inneholder et prosjekt/sted som er attributert til andre i sources
-        for source_text in source_texts:
-            source_lower = source_text.lower()
-            
-            # Finn alle andre arkitekter nevnt i denne kilden
-            for architect in KNOWN_ARCHITECTS:
-                if architect in source_lower:
-                    # Finn om denne arkitekten er knyttet til et sted/prosjekt i claim
-                    # Eksempel: "Ivar Bentsen har ved Vigerslev Allé..."
-                    architect_project_pattern = rf'{architect}.*?(?:ved|i|for|til)\s+([A-ZÆØÅ][a-zæøå\s]{{3,30}})'
-                    matches = re.findall(architect_project_pattern, source_lower)
-                    
-                    for project_name in matches:
-                        project_clean = project_name.strip()
-                        # Hvis Kay claims dette projektet som sitt eget
-                        if project_clean in claim_content and len(project_clean) > 5:
-                            warnings.append({
-                                "type": "ATTRIBUTION_ERROR",
-                                "severity": "HIGH",
-                                "kay_claim": f"{claim_type} {claim_content[:60]}...",
-                                "actual_architect": architect.title(),
-                                "project": project_clean.title(),
-                                "source_snippet": source_text[:150] + "...",
-                                "recommendation": f"Bør være: '{architect.title()} har ved {project_clean.title()}...'"
-                            })
-                            print(f"      ⚠️ ATTRIBUTION ERROR: Kay claims '{project_clean}' men kilden siger '{architect}'")
-    
-    return warnings
-
-def clean_danish_response(text: str) -> str:
-    """
-    NYT v10.5: Fjerner norske/svenske infiltrasjoner og metadata-lekkage
-    """
-    
-    # METADATA CLEANUP (dette var allerede i koden, men gjør det mer robust)
-    cleaned = re.sub(r'^(System:|Spørgsmål:|###|Kay Fisker:).*$', '', text, flags=re.MULTILINE)
-    cleaned = re.sub(r'\n+', ' ', cleaned).strip()
-    
-    # NORSK/SVENSK RENSING (kan utvides basert på faktiske observasjoner)
-    # Hvis du ser spesifikke norske ord lekke inn, legg dem til her
-    replacements = {
-        r'\bokså\b': 'også',
-        r'\bhvordan\b(?=\s+(?:skal|kan|vil))': 'hvordan',  # Kun hvis etterfulgt av modal
-        # Legg til flere patterns du observerer
-    }
-    
-    for pattern, replacement in replacements.items():
-        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
-    
-    # TRIM EDGES
-    cleaned = cleaned.strip()
-    
-    # Fjern dobbel-punktum ved slutten
-    if cleaned.endswith('..'):
-        cleaned = cleaned[:-1]
-    
-    return cleaned
-
-# --- FORBEDRET SEGMENT-EKSTRAKSJON (fra v.9.9) - BEHOLDES ---
+# --- FORBEDRET SEGMENT-EKSTRAKSJON (fra v.9.9) ---
 def extract_most_relevant_excerpt(source_text: str, response_text: str, min_words: int = 20, max_words: int = 80) -> dict:
     """
     Finner det mest relevante utdraget fra kilden basert på FAKTISK semantisk overlapp.
+    Returnerer både utdrag, forklaring og relevans-score.
     """
     if not embedder or not source_text or not response_text:
         return {
@@ -378,7 +269,7 @@ def extract_most_relevant_excerpt(source_text: str, response_text: str, min_word
             "excerpt": " ".join(words),
             "relevance": 0.0,
             "method": "truncation",
-            "explanation": "Ingen passende vinduer funnet"
+            "explanation": "Ingen passende vinduer funnet, bruker begynnelsen"
         }
     
     # Encode response
@@ -415,6 +306,7 @@ def extract_most_relevant_excerpt(source_text: str, response_text: str, min_word
 
 def find_attributable_segments(source_text: str, response_text: str, threshold: float = 0.50) -> list:
     """
+    JUSTERT threshold 0.50 (var 0.60) for å unngå false negatives.
     Finner KUN segmenter som FAKTISK bidrar direkte til responsen.
     """
     if not embedder:
@@ -425,8 +317,8 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
         return []
 
     segments = []
-    window_size = 20
-    step = 8
+    window_size = 20  # Økt til 20 for bedre kontekst
+    step = 8  # Større step for mindre overlapp
 
     for i in range(0, len(source_words) - window_size + 1, step):
         segments.append({
@@ -444,7 +336,7 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
 
     attributed = []
     for idx, sim in enumerate(similarities):
-        if sim > threshold:
+        if sim > threshold:  # STRENGERE: 0.60 (var 0.50)
             attributed.append({
                 "text": segments[idx]["text"],
                 "similarity": float(sim),
@@ -452,24 +344,31 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
                 "confidence": "high" if sim > 0.70 else "medium"
             })
     
+    # Kun top 2 segmenter (var 3)
     attributed.sort(key=lambda x: x["similarity"], reverse=True)
     return attributed[:2]
 
-# --- FOUCAULDIANSK GENEALOGISK ANALYSE - BEHOLDES ---
+# --- FOUCAULDIANSK GENEALOGISK ANALYSE (fra v.10.0) ---
 
 def detect_discursive_shifts(strata: list) -> dict:
-    """Detekterer diskursive brudd og begrepsforskyninger over tid"""
+    """
+    Detekterer DISKURSIVE BRUDD og begrepsforskyninger over tid.
+    Inspirert av Foucault's "Archaeology of Knowledge".
+    """
     if not embedder or len(strata) < 3:
         return {"shifts": [], "periods": []}
     
+    # Sorter kilder temporalt
     sorted_strata = sorted([s for s in strata if s.get("year")], key=lambda x: int(x["year"]))
     
     if len(sorted_strata) < 3:
         return {"shifts": [], "periods": []}
     
+    # Embed alle tekster
     texts = [s["text"] for s in sorted_strata]
     embeddings = embedder.encode(texts, convert_to_tensor=True)
     
+    # Beregn diskursiv avstand mellom påfølgende perioder
     shifts = []
     for i in range(len(sorted_strata) - 1):
         distance = cosine(
@@ -477,6 +376,7 @@ def detect_discursive_shifts(strata: list) -> dict:
             embeddings[i+1].cpu().numpy()
         )
         
+        # DISKURSIVT BRUDD hvis avstand > 0.35
         if distance > 0.35:
             shifts.append({
                 "year_from": sorted_strata[i]["year"],
@@ -487,13 +387,14 @@ def detect_discursive_shifts(strata: list) -> dict:
                 "source_b": sorted_strata[i+1]["ref"]
             })
     
+    # Identifiser diskursive PERIODER (clustering)
     if len(embeddings) >= 3:
         clustering = DBSCAN(eps=0.3, min_samples=2, metric='cosine')
         labels = clustering.fit_predict(embeddings.cpu().numpy())
         
         periods = []
         for label in set(labels):
-            if label == -1:
+            if label == -1:  # Noise
                 continue
             indices = [i for i, l in enumerate(labels) if l == label]
             period_strata = [sorted_strata[i] for i in indices]
@@ -504,7 +405,7 @@ def detect_discursive_shifts(strata: list) -> dict:
                 "year_range": f"{min(years)}-{max(years)}",
                 "source_count": len(period_strata),
                 "sources": [s["ref"] for s in period_strata],
-                "coherence": "HIGH"
+                "coherence": "HIGH"  # Innenfor samme cluster = høy koherens
             })
     else:
         periods = []
@@ -517,7 +418,10 @@ def detect_discursive_shifts(strata: list) -> dict:
     }
 
 def trace_concept_genealogy(strata: list, concept: str) -> dict:
-    """Sporer en begrepets genealogi gjennom kildene"""
+    """
+    Sporer en BEGREPETS GENEALOGI gjennom kildene.
+    Hvordan endrer betydningen av et begrep seg over tid?
+    """
     if not strata:
         return {"concept": concept, "occurrences": [], "semantic_drift": []}
     
@@ -526,6 +430,7 @@ def trace_concept_genealogy(strata: list, concept: str) -> dict:
     for s in strata:
         text_lower = s["text"].lower()
         if concept.lower() in text_lower:
+            # Finn kontekst rundt begrepet (±50 ord)
             words = s["text"].split()
             for i, word in enumerate(words):
                 if concept.lower() in word.lower():
@@ -539,8 +444,9 @@ def trace_concept_genealogy(strata: list, concept: str) -> dict:
                         "context": context,
                         "source_id": s["id"]
                     })
-                    break
+                    break  # Kun første forekomst per kilde
     
+    # Beregn SEMANTISK DRIFT hvis vi har embedder
     semantic_drift = []
     if embedder and len(occurrences) >= 2:
         contexts = [o["context"] for o in occurrences]
@@ -568,13 +474,19 @@ def trace_concept_genealogy(strata: list, concept: str) -> dict:
     }
 
 def analyze_power_knowledge_nexus(strata: list) -> dict:
-    """Analyserer makt/kunnskaps-neksus i kildene"""
+    """
+    Analyserer MAKT/KUNNSKAPS-NEKSUS i kildene.
+    - Hvem autoriserer Fisker? (sitater, referanser)
+    - Hvilke institusjoner legitimerer utsagnene?
+    - Hierarki av kildetyper
+    """
     authority_markers = {
         "citations": [],
         "institutional_references": [],
         "authority_hierarchy": {}
     }
     
+    # Søk etter autoritetsfigurer/institusjoner
     authority_patterns = [
         (r"(Le Corbusier|Asplund|Wright|Gropius|Mies)", "ARCHITECT"),
         (r"(Akademiet|Kunstakademiet|universitet|skole)", "INSTITUTION"),
@@ -593,6 +505,7 @@ def analyze_power_knowledge_nexus(strata: list) -> dict:
                     "source_ref": s["ref"]
                 })
     
+    # Hierarki basert på kildetype
     type_counts = Counter([s["type"] for s in strata])
     authority_markers["authority_hierarchy"] = {
         "PRIMARY": type_counts.get("PRIMARY", 0),
@@ -600,10 +513,11 @@ def analyze_power_knowledge_nexus(strata: list) -> dict:
         "QUOTES": type_counts.get("QUOTES", 0)
     }
     
+    # Identifiser dominerende diskurs
     if type_counts.get("PRIMARY", 0) > type_counts.get("QUOTES", 0):
-        dominant = "EIGENMACHT"
+        dominant = "EIGENMACHT"  # Fisker's egen autoritet
     else:
-        dominant = "BORROWED_AUTHORITY"
+        dominant = "BORROWED_AUTHORITY"  # Baserer seg på andre
     
     return {
         "authority_citations": authority_markers["citations"],
@@ -612,8 +526,12 @@ def analyze_power_knowledge_nexus(strata: list) -> dict:
         "total_authority_markers": len(authority_markers["citations"])
     }
 
+# --- KOMBINERT ANALYSE (Epistemisk + Genealogisk) ---
+
 def analyze_source_relations(strata: list, response_text: str, query: str) -> dict:
-    """Epistemisk analyse med strengere vurdering"""
+    """
+    EPISTEMISK ANALYSE med strengere vurdering (fra v.9.9)
+    """
     if not embedder:
         return {}
 
@@ -625,15 +543,17 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
         "epistemic_levels": {}
     }
 
+    # 1. Attributions med ENDA STRENGERE threshold (0.60)
     total_attributed = 0
     for s in strata:
-        attributed = find_attributable_segments(s["text"], response_text, threshold=0.60)
+        attributed = find_attributable_segments(s["text"], response_text, threshold=0.60)  # Økt fra 0.55
         if attributed:
             avg_similarity = sum(seg["similarity"] for seg in attributed) / len(attributed)
             
-            if avg_similarity > 0.68:
+            # STRENGERE epistemisk vurdering
+            if avg_similarity > 0.68:  # Litt lavere (var 0.72)
                 level = "ARKIVFAKTA"
-            elif avg_similarity > 0.55:
+            elif avg_similarity > 0.55:  # Litt lavere (var 0.62)
                 level = "ARKIV-NÆR"
             else:
                 level = "PRAKSISBASERT"
@@ -648,6 +568,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
             })
             total_attributed += len(attributed)
 
+    # 2. Source Comparisons
     if len(strata) >= 2:
         source_texts = [s["text"] for s in strata]
         source_embs = embedder.encode(source_texts, convert_to_tensor=True)
@@ -662,6 +583,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
                         "relation_type": "KONVERGENT" if sim > 0.7 else "RESONANT"
                     })
 
+    # 3. Query-Source Relations
     query_emb = embedder.encode(query, convert_to_tensor=True)
     for s in strata:
         rel = util.cos_sim(query_emb, embedder.encode(s["text"], convert_to_tensor=True))[0][0].item()
@@ -671,6 +593,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
             "relevance_category": "HØY" if rel > 0.6 else "MEDIUM" if rel > 0.4 else "LAV"
         })
 
+    # 4. Response Grounding
     resp_emb = embedder.encode(response_text, convert_to_tensor=True)
     comb_emb = embedder.encode(" ".join([s["text"] for s in strata]), convert_to_tensor=True)
     g_score = util.cos_sim(resp_emb, comb_emb)[0][0].item()
@@ -678,9 +601,10 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
     analysis["response_grounding"] = {
         "score": float(g_score),
         "assessment": "SOLID" if g_score > 0.7 else "MODERAT" if g_score > 0.5 else "SVAK",
-        "warning": None if g_score > 0.5 else "Responsen har begrenset støtte i kildene"
+        "warning": None if g_score > 0.5 else "Responsen har begrenset støtte i kildene - mulig NIVÅ 3 syntese"
     }
     
+    # 5. Overall Epistemic Assessment
     if analysis["source_attributions"]:
         avg_attribution = sum(a["attribution_strength"] for a in analysis["source_attributions"]) / len(analysis["source_attributions"])
         high_conf_count = len([a for a in analysis["source_attributions"] if a["attribution_strength"] > 0.65])
@@ -710,11 +634,16 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
     return analysis
 
 def perform_full_genealogical_analysis(strata: list, response_text: str, query: str) -> dict:
-    """Kombinert: Epistemisk + Genealogisk analyse"""
+    """
+    KOMBINERT: Epistemisk analyse + Foucauldiansk genealogisk analyse
+    NYT: Bruker Mistral LLM for dypere genealogisk innsikt
+    """
     print("\n🔬 Utfører fullstendig genealogisk-epistemisk analyse...")
     
+    # EPISTEMISK ANALYSE (fra v.9.9) - BEHOLDES
     epistemic_analysis = analyze_source_relations(strata, response_text, query)
     
+    # GENEALOGISK ANALYSE (fra v.10.0) - BEHOLDES
     genealogical_analysis = {
         "discursive_shifts": detect_discursive_shifts(strata),
         "concept_genealogies": {},
@@ -723,10 +652,12 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
         "discontinuities": []
     }
     
+    # Spor ALLE genealogiske begreper - BEHOLDES
     for concept in GENEALOGICAL_CONCEPTS:
         if any(concept.lower() in s["text"].lower() for s in strata):
             genealogical_analysis["concept_genealogies"][concept] = trace_concept_genealogy(strata, concept)
     
+    # Temporal fordeling - BEHOLDES
     years = [int(s["year"]) for s in strata if s.get("year")]
     if years:
         genealogical_analysis["temporal_distribution"] = {
@@ -737,6 +668,7 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
             "decade_distribution": dict(Counter([y // 10 * 10 for y in years]))
         }
     
+    # Diskontinuiteter - BEHOLDES
     if genealogical_analysis["discursive_shifts"]["shifts"]:
         major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]
         genealogical_analysis["discontinuities"] = [{
@@ -745,6 +677,7 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
             "magnitude": shift["distance"]
         } for shift in major_shifts]
     
+    # KOMBINER alle analyser - BEHOLDES + UTVIDES
     combined = {
         **epistemic_analysis,
         **genealogical_analysis
@@ -752,6 +685,8 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
     
     print(f"   ✅ Epistemisk nivå: {epistemic_analysis['epistemic_levels'].get('primary_level', 'N/A')}")
     print(f"   ✅ {len(genealogical_analysis['concept_genealogies'])} begrepsgeneaologier")
+    print(f"   ✅ {len(genealogical_analysis['discursive_shifts']['shifts'])} diskursive skift")
+    print(f"   ✅ {len(genealogical_analysis['power_knowledge']['authority_citations'])} autoritetmarkører")
     
     return combined
 
@@ -773,21 +708,18 @@ def _fetch_ns(ns: str, qvec, top_k: int):
         print(f"⚠️ Feil i namespace '{ns}': {e}")
         return []
 
-def pinecone_search_logic(user_prompt: str, total_results: int = 8):
-    """
-    FORBEDRET v10.5: Økt til 8 results, styrket primary sources
-    """
+def pinecone_search_logic(user_prompt: str, total_results: int = 6):
+    """RAG-søk med Mix-strategi"""
     if not (pinecone_index and embedder):
         print("⚠️ Pinecone eller embedder ikke tilgjengelig")
         return []
     
     print(f"\n🔍 Analyserer: '{user_prompt}'")
     enhanced = enhance_query(user_prompt)
-    print(f"   ↳ Ekspandert til: '{enhanced[:100]}...'")
+    print(f"   ↳ Utvida til: '{enhanced}'")
     qvec = embedder.encode(enhanced).tolist()
     
-    # ØKT quota for primary sources
-    ns_quotas = {"primary": 8, "secondary": 4, "quotes": 4}
+    ns_quotas = {"primary": 6, "secondary": 4, "quotes": 3}
     pool = defaultdict(list)
     
     for ns, quota in ns_quotas.items():
@@ -804,7 +736,7 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
                 cleaned_pool[ns].append(m)
 
     if reranker:
-        print("   🔄 Reranking...")
+        print("   🔄 Reranker...")
         for ns in cleaned_pool:
             if not cleaned_pool[ns]:
                 continue
@@ -814,13 +746,11 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
 
     final_selection = []
     
-    # PRIORITER: 1 secondary + 1 quote først
     if cleaned_pool["secondary"]:
         final_selection.append(cleaned_pool["secondary"].pop(0))
     if cleaned_pool["quotes"]:
         final_selection.append(cleaned_pool["quotes"].pop(0))
     
-    # FYLL OPP med resten (mostly primary)
     remaining = []
     remaining.extend(cleaned_pool["primary"])
     remaining.extend(cleaned_pool["secondary"])
@@ -836,7 +766,11 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
         if candidate not in final_selection:
             final_selection.append(candidate)
     
-    print(f"   ✅ Returnerer {len(final_selection)} kilder")
+    print(f"   ✅ Returnerer {len(final_selection)} diverse kilder (Mix)")
+    
+    for i, m in enumerate(final_selection):
+        md = m["metadata"]
+        print(f"      [{i+1}] {md.get('__ns', '?').upper()} | {md.get('year', '?')} | {md.get('text', '')[:60]}...")
     
     return final_selection
 
@@ -849,7 +783,7 @@ async def api_chat(req: Request):
     if len(user_prompt.strip()) < 3:
         return JSONResponse({"error": "Spørsmål for kort"}, 400)
     
-    matches = pinecone_search_logic(user_prompt, total_results=8)
+    matches = pinecone_search_logic(user_prompt, total_results=6)
     
     if not matches:
         return JSONResponse({
@@ -859,8 +793,7 @@ async def api_chat(req: Request):
             "visuals": [],
             "state": "FRAKOBLET",
             "intensity": 0.0,
-            "genealogy": {},
-            "attribution_warnings": []
+            "genealogy": {}
         }, 200)
     
     context = "\n---\n".join([m["metadata"]["text"] for m in matches])
@@ -873,46 +806,48 @@ async def api_chat(req: Request):
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     
-    # STRENGERE ATTRIBUTION-BASERT PROMPT v10.5
+    # HYBRID EPISTEMISK PROMPT (forbedret for v.10.2)
     system_prompt = (
-        "Du er Kay Fisker (1893–1965), dansk arkitekt og professor.\n"
-        "Du svarer på dansk baseret på kildematerialet nedenfor.\n\n"
+        "Du er den danske arkitekt Kay Fisker (1893–1965). "
+        "Du svarer UDELUKKENDE på dansk – aldrig norsk, svensk eller andet sprog.\n\n"
         
-        "KRITISK REGEL — ATTRIBUTION:\n"
-        "Når du nævner et PROJEKT:\n"
-        "  • Hvis DU har bygget/projekteret det: 'Mit projekt [navn] (år)...'\n"
-        "  • Hvis EN ANDEN har bygget det: '[Arkitekt] har ved [sted]...'\n"
-        "  • Hvis du REFERERER til andres arbejde: Navngiv dem eksplisit\n"
-        "  • Hvis uklart hvem: Brug passiv form 'Ved bebyggelsen...'\n\n"
+        "SPROGLIGE KRAV:\n"
+        "- Brug KUN dansk ortografi og grammatik\n"
+        "- Dansk: 'jeg', 'arkitektur', 'bygning', 'bolig'\n"
+        "- IKKE norsk: 'jeg', 'arkitektur', 'bygning', 'bolig' (selv om det ser likt ud)\n"
+        "- ALDRIG: 'også', 'eller', 'hvordan' med norsk uttale/betydning\n\n"
         
-        "Når du nævner en IDÉ eller TEORI:\n"
-        "  • Fra DINE tekster: 'Som jeg skrev i [publikation]...', 'I mit arbejde...'\n"
-        "  • Fra EN ANDEN: '[Navn] har demonstreret...', '[Navn] argumenterer...'\n"
-        "  • Generel diskurs: 'I denne periode...', 'Datidens arkitekter...'\n\n"
+        "STILISTISKE KRAV:\n"
+        "- Tal som Kay Fisker fra 1930-50erne: høflig, præcis, faglig\n"
+        "- Brug korte, klare sætninger uden omsvøb\n"
+        "- Undgå moderne jargon eller akademisk posering\n\n"
         
-        "EKSEMPLER PÅ KORREKT ATTRIBUTION:\n"
-        "✓ 'Ivar Bentsen har ved Vigerslev Allé anvendt et interessant system'\n"
-        "✓ 'Ved Vestersøhus, som jeg projekterede i 1935, arbejdede jeg med...'\n"
-        "✓ 'Thorkild Henningsen har i sine rækkehuse vist...'\n"
-        "✗ FORKERT: 'Mit projekt ved Vigerslev Allé' (hvis det er Bentsens!)\n"
-        "✗ FORKERT: 'Jeg har bygget...' (hvis du kun refererer til det)\n\n"
+        "TRE EPISTEMISKE NIVEAUER:\n\n"
         
-        "TRE EPISTEMISKE NIVEAUER:\n"
-        "1. ARKIVFAKTA: Du citerer/parafraserer kilder eksplisit\n"
-        "2. ARKIV-NÆR: Du syntetiserer, men markerer det ('Mine projekter viser...')\n"
-        "3. KONTEKST: Arkivet er tavst, du kontekstualiserer ('Som arkitekt dengang...')\n\n"
+        "NIVEAU 1 — ARKIVFAKTA (direkte kildebaseret):\n"
+        "- Kun når du citerer eller parafraserer eksplicit fra kilderne\n"
+        "- Eksempel: 'I Byplanproblemer (1933) skriver jeg, at...'\n\n"
         
-        "FORBUDT:\n"
-        "- Opfinde konkrete data (årstal, navne, steder)\n"
-        "- Attributere andres projekter til dig selv\n"
-        "- Generiske modernisme-klichéer\n"
-        "- Blande dansk og norsk\n\n"
+        "NIVEAU 2 — ARKIV-NÆR TOLKNING (kildebaseret syntese):\n"
+        "- Når du kombinerer flere arkivkilder til en tolkning\n"
+        "- Markér tydeligt: 'Mine skrifter viser...', 'I denne periode fremgår det...'\n"
+        "- Kun begreber og tanker som findes i materialet\n\n"
         
-        "Svar i 2-4 setninger. Vær konkret om hvem der har gjort hvad."
+        "NIVEAU 3 — FAGLIG KONTEKSTUALISERING (arkitekturhistorisk ramme):\n"
+        "- Når arkivet er tavst, men du kan placere emnet i datidens arkitekturdiskurs\n"
+        "- ALTID markeret: 'Som arkitekt i min generation...', 'I lyset af tidens strømninger...'\n"
+        "- ALDRIG fremstillet som dit eget eksplicitte udsagn\n\n"
+        
+        "ABSOLUT FORBUDT:\n"
+        "- Opfinde konkrete data, årstal eller fakta som ikke står i kilderne\n"
+        "- Umarkerede generaliseringer fremstillet som arkivfakta\n"
+        "- Blande dansk og norsk sprog\n\n"
+        
+        "Svar kort (2-4 sætninger), præcist og i et nøgternt fagsprog."
     )
     
     if bio_context:
-        system_prompt += f"\n\nBiografisk kontekst:\n{bio_context}\n"
+        system_prompt += f"\n\nBiografisk kontekst (for tolkning):\n{bio_context}\n"
     if temporal_context:
         system_prompt += f"\nRelevant tidsperiode:\n{temporal_context}\n"
     
@@ -923,35 +858,25 @@ async def api_chat(req: Request):
         f"Kay Fisker:"
     )
     
-    # FORBEDRET GENERERING v10.5
     result = pipe(
         full_prompt,
-        max_new_tokens=250,      # ØKT fra 200
-        temperature=0.42,        # ØKT fra 0.28 (mer naturlig)
-        top_p=0.88,              # SENKET fra 0.90
-        top_k=40,                # NYTT: begrenser ordvalg
-        repetition_penalty=1.18, # ØKT fra 1.15
+        max_new_tokens=300,  # Økt fra 200 for å unngå avkutting
+        temperature=0.28,    # Litt høyere for mer naturlig Kay Fisker-tone
+        top_p=0.90,          # Litt lavere for mer konsistent dansk
+        repetition_penalty=1.15,
         do_sample=True
     )
     
     generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
-    generated_text = clean_danish_response(generated_text)  # NYT: Rensing
+    generated_text = re.sub(r"^(System:|Spørgsmål:|###).*", "", generated_text, flags=re.MULTILINE).strip()
+    generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
-    # NYT v10.5: ATTRIBUTION ERROR CHECK
-    source_texts = [m["metadata"]["text"] for m in matches]
-    attribution_warnings = check_attribution_errors(generated_text, source_texts)
-    
-    if attribution_warnings:
-        print(f"\n⚠️ ATTRIBUTION WARNINGS DETECTED: {len(attribution_warnings)}")
-        for w in attribution_warnings:
-            print(f"   - {w['severity']}: {w['kay_claim']}")
-            print(f"     → Faktisk av {w['actual_architect']}: {w['project']}")
-    
-    # Bygg strata med relevante utdrag
+    # Bygg strata MED relevante utdrag (FORBEDRET - kjører i threadpool)
     strata = []
     for i, m in enumerate(matches):
         full_text = m["metadata"].get("text", "")
         
+        # Kjør tung embedding-operasjon i threadpool
         excerpt_info = await run_in_threadpool(
             extract_most_relevant_excerpt, 
             full_text, 
@@ -972,17 +897,16 @@ async def api_chat(req: Request):
             "score": m.get("score", 0.0)
         })
 
-    # FULLSTENDIG ANALYSE
+    # FULLSTENDIG ANALYSE (Epistemisk + Genealogisk) - kjører i threadpool
     genealogy = await run_in_threadpool(
         perform_full_genealogical_analysis, 
         strata, 
         generated_text, 
         user_prompt
     )
-    
     visuals = extract_visuals(generated_text)
     
-    # Bestem state
+    # Bestem state basert på analyse
     epistemic_level = genealogy.get("epistemic_levels", {}).get("primary_level", "FRIKSJON")
     has_major_shifts = len([s for s in genealogy.get("discursive_shifts", {}).get("shifts", []) if s.get("type") == "MAJOR_SHIFT"]) > 0
     
@@ -1002,9 +926,8 @@ async def api_chat(req: Request):
         "strata": strata,
         "visuals": visuals,
         "state": state,
-        "intensity": min(len(strata)/8, 1.0),
-        "genealogy": genealogy,
-        "attribution_warnings": attribution_warnings  # NYT v10.5
+        "intensity": min(len(strata)/6, 1.0),
+        "genealogy": genealogy
     }
 
 @app.get("/tts")
