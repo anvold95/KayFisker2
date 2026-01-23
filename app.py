@@ -183,44 +183,46 @@ def normalize_orthography(txt: str) -> str:
 
 def enhance_query(user_prompt: str) -> str:
     """
-    FORBEDRET v10.5: Mer spesifikk query expansion
+    MINIMAL expansion - trust the embedder for semantic matching.
+    Kun konkrete værker får spesifikk expansion.
     """
     prompt_lower = user_prompt.lower()
     
-    # SPECIFICITET: Hvis bruker nevner konkret verk, BOOST det KRAFTIG
+    # BARE konkrete byggværker
     works_map = {
-        "vestersøhus": "Vestersøhus Vester Søgade 1935 boligblokk teglsten gårdhave Kay Fisker eget projekt",
-        "dronningegården": "Dronningegården Dronningens Tværgade 1943 boligkarré København Kay Fisker",
-        "aarhus universitet": "Aarhus Universitet 1931-1946 hovedbygning gul tegl campus C.F. Møller Kay Fisker samarbejde",
-        "hornbækhus": "Hornbækhus 1923 klassicisme landsted privat villa Kay Fisker ung karriere",
-        "vigerslev": "Vigerslev Allé Ivar Bentsen rækkehuse boligbyggeri Kay Fisker refererer",
-        "bakkehu": "Bakkehusene bakkehus Ivar Bentsen Thorkild Henningsen rækkehustyper",
-        # Tilføj flere hovedværker som dine kilder inneholder
+        "vestersøhus": "Vestersøhus Vester Søgade 1935 boligblokk Kay Fisker",
+        "dronningegården": "Dronningegården Dronningens Tværgade 1943 Kay Fisker",
+        "vigerslev": "Vigerslev Allé Ivar Bentsen rækkehuse boligbyggeri",
+        "aarhus universitet": "Aarhus Universitet hovedbygning C.F. Møller Kay Fisker",
+        "hornbækhus": "Hornbækhus 1923 landsted villa Kay Fisker",
+        "bakkehus": "Bakkehusene Ivar Bentsen Thorkild Henningsen rækkehuse",
     }
     
     for work, expansion in works_map.items():
         if work in prompt_lower:
-            print(f"   🎯 Detekteret værk: {work} → Ekspanderer til specifik søgning")
-            return expansion  # RETURNER direkte expansion
+            print(f"   🎯 Konkret værk detekteret: {work}")
+            return expansion
     
-    # BREDERE: Hvis biografisk
-    if any(w in prompt_lower for w in ["hvem", "liv", "karriere", "uddannelse", "født", "død"]):
-        return f"Kay Fisker biografi arkitekt professor Kunstakademiet født 1893 {user_prompt}"
+    # Alt annet: Minimal expansion
+    if "kay fisker" not in prompt_lower and "fisker" not in prompt_lower:
+        return f"Kay Fisker {user_prompt}"
     
-    # BREDERE: Hvis teoretisk
-    if any(w in prompt_lower for w in ["hvorfor", "princip", "filosofi", "tanke", "holdning", "mening"]):
-        return f"Kay Fisker arkitektur teori funktion form materiale tradition bolig {user_prompt}"
-    
-    # BREDERE: Hvis praktisk
-    if any(w in prompt_lower for w in ["hvordan", "bygge", "tegne", "konstruere", "arbejde"]):
-        return f"Kay Fisker byggeri tegning konstruktion praksis håndværk tegel mursten {user_prompt}"
-    
-    # BREDERE: Hvis om rækkehuse specifikt
-    if "rækkehus" in prompt_lower or "rækkehuse" in prompt_lower:
-        return f"Kay Fisker rækkehustyper sammenbygning typebolig bolighus {user_prompt}"
-    
-    # DEFAULT: Lægg "Kay Fisker arkitektur" foran
-    return f"Kay Fisker dansk arkitekt {user_prompt}"
+    return user_prompt
+```
+
+**Test på dine queries:**
+```
+"Hvad kendetegner dit arbejde med rækkehuse?"
+→ "Kay Fisker Hvad kendetegner dit arbejde med rækkehuse?"
+→ Embedder matcher semantisk med rækkehus-kilder ✅
+
+"Hvad kendetegner dit arbejde med teglsten?"
+→ "Kay Fisker Hvad kendetegner dit arbejde med teglsten?"
+→ Embedder matcher semantisk med tegl-kilder ✅
+
+"Fortæl om Vestersøhus"
+→ "Vestersøhus Vester Søgade 1935 boligblokk Kay Fisker"
+→ Pinecone får konkrete søketermer ✅
 
 def extract_temporal_context(user_prompt: str, timeline: str) -> str:
     """Henter relevante timeline-segmenter basert på query"""
