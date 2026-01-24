@@ -1,12 +1,13 @@
 """
-KAY FISKER LANGUAGE MODEL v10.12
+KAY FISKER LANGUAGE MODEL v10.13
 ================================
-ENDRINGER FRA v10.11:
-- KRITISK KILDESKILLE: Eksplisitt markering av primær vs sekundærkilder
-- Prompt advarer om at kilder etter 1965 er skrevet OM Fisker, ikke AV ham
-- Kildeformat: [DIN EGEN TEKST] vs [SEKUNDÆRKILDE]
-- Forbud mot å nevne personer født etter 1965
-- Forbud mot å påstå han skrev bøker etter sitt dødsår
+TO-TRINNS ARKITEKTUR:
+1. Gemini 2.5 Flash: Leser kilder, ekstraherer fakta (kildetro)
+2. Mistral 7B + LoRA: Omformulerer i Fiskers stemme (personlighet)
+
+Kombinerer det beste fra begge verdener:
+- Geminis evne til å lese og syntetisere kilder
+- LoRAs finetuning på Fiskers skrivestil
 """
 
 import os
@@ -29,6 +30,14 @@ from huggingface_hub import hf_hub_download, login, whoami
 from scipy.spatial.distance import cosine
 from sklearn.cluster import DBSCAN
 
+# v10.13: Gemini for faktaekstraksjon
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    print("⚠️ google-generativeai ikke installert - kjører uten Gemini")
+
 try:
     from text_cleaner import clean_text
 except ImportError:
@@ -47,13 +56,27 @@ if HF_TOKEN:
     except Exception as e:
         print(f"⚠️ Hugging Face Login feil: {e}")
 
+# v10.13: Gemini konfigurasjon
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+gemini_model = None
+if GEMINI_AVAILABLE and GOOGLE_API_KEY:
+    try:
+        genai.configure(api_key=GOOGLE_API_KEY)
+        gemini_model = genai.GenerativeModel('gemini-2.0-flash')
+        print("✅ Gemini 2.0 Flash konfigurert for faktaekstraksjon")
+    except Exception as e:
+        print(f"⚠️ Gemini konfigurasjon feilet: {e}")
+else:
+    print("⚠️ Gemini ikke tilgjengelig - kjører kun med Mistral+LoRA")
+
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv")
 EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"  # 768-dim (matcher Gemini-arkiv)
 
 # =====================================================
-# v10.9: MODELL-KONFIGURASJON
-# Sett USE_MIXTRAL=true for bedre reasoning (krever mer GPU)
+# v10.13: TO-TRINNS ARKITEKTUR
+# Trinn 1: Gemini for fakta | Trinn 2: LoRA for stemme
+# Fallback til kun LoRA hvis Gemini ikke er tilgjengelig
 # =====================================================
 USE_MIXTRAL = os.environ.get("USE_MIXTRAL", "false").lower() == "true"
 
@@ -869,55 +892,16 @@ async def api_chat(req: Request):
             "state": "FRAKOBLET",
             "intensity": 0.0,
             "genealogy": {},
-            "version": "v10.12"
+            "version": "v10.13"
         }, 200)
     
     # =====================================================
-    # v10.12 SYSTEM PROMPT - KRITISK KILDESKILLE
-    # Modellen MÅ skille mellom tekster AV Fisker og tekster OM Fisker
+    # v10.13: TO-TRINNS ARKITEKTUR
+    # Trinn 1: Gemini ekstraherer fakta fra kilder
+    # Trinn 2: LoRA omformulerer i Fiskers stemme
     # =====================================================
-    system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiet.
-
-DIN STEMME OG STIL:
-Du taler som i dine forelæsninger og artikler - præcis, faglig, men med personlige vurderinger:
-- "det fineste exempel jeg har kunnet finde"
-- "det har moret mig at medtage her"  
-- "forekommer mig at være et af de smukkeste og mest afklarede exempler"
-
-KRITISK - KILDEHÅNDTERING:
-⚠️ Kilder fra før 1965 (dit dødsår) kan være dine egne tekster - tal om dem i 1. person.
-⚠️ Kilder fra EFTER 1965 er skrevet OM dig af andre - disse er IKKE dine ord!
-⚠️ "Kay Fisker: Moderne arkitektur - Levende tradition" (2020) er Martin Søbergs monografi OM dig - du skrev den IKKE.
-⚠️ Hvis en kilde taler om dig i 3. person ("Fisker mente...", "Kay Fisker var...") er det en sekundærkilde.
-
-SÅDAN SVARER DU:
-1. Brug KUN dine EGNE tekster (før 1965) som grundlag for dine meninger
-2. Sekundærkilder kan give kontekst, men du taler IKKE som om du skrev dem
-3. Giv personlige vurderinger: "jeg finder", "forekommer mig", "efter min mening"
-4. Vær konkret: navne, årstal, bygninger, priser, mål
-5. Hvis du ikke har egne kilder om emnet, sig det ærligt
-
-FORBUDT:
-❌ At påstå du skrev bøger efter 1965
-❌ At nævne personer der blev født efter dit dødsår
-❌ At tale om dig selv i 3. person
-❌ Generiske udsagn uden konkrete referencer
-
-EKSEMPEL PÅ GOD FISKER-STEMME:
-"Bakkehusene fra 1922 var en værdifuld indsats af Bentsen og Henningsen. Der er 
-paafaldende ligheder mellem Henningsens arbejder og M.H. Baillie Scotts projekt 
-fra 1902, som det har moret mig at medtage i min undersøgelse."
-
-Svar på dansk. 4-6 sætninger."""
     
-    temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
-    if temporal_context:
-        system_prompt += f"\n\nTidsperiode:\n{temporal_context}"
-    
-    # =====================================================
-    # v10.12: KILDE-FORMAT MED TYDELIG PRIMÆR/SEKUNDÆR-MARKERING
-    # Kritisk for at modellen ikke blander egne tekster med tekster OM Fisker
-    # =====================================================
+    # Bygg kilde-kontekst for begge trinn
     source_lines = []
     for i, m in enumerate(matches, 1):
         text = m["metadata"].get("text", "")[:600]
@@ -925,49 +909,117 @@ Svar på dansk. 4-6 sætninger."""
         title = m["metadata"].get("title", "Arkiv")
         author = m["metadata"].get("author", "Kay Fisker")
         
-        # v10.12: Eksplisitt markering av kildetype
         try:
             year_int = int(year) if year != "?" else 1950
         except:
             year_int = 1950
             
         if year_int > 1965 or author != "Kay Fisker":
-            # SEKUNDÆRKILDE - skrevet OM Fisker
-            source_prefix = f"[SEKUNDÆRKILDE {i} - '{title}' av {author}, {year}]\n⚠️ Dette er skrevet OM Kay Fisker, ikke AV ham:"
+            source_prefix = f"[SEKUNDÆRKILDE - '{title}' av {author}, {year}]"
         else:
-            # PRIMÆRKILDE - Fiskers egne tekster
-            source_prefix = f"[DIN EGEN TEKST {i} - '{title}', {year}]\n✅ Dette er dine egne ord:"
+            source_prefix = f"[PRIMÆRKILDE - '{title}', {year}]"
         
         source_lines.append(f"{source_prefix}\n{text}")
     
     context = "\n\n".join(source_lines)
     
-    full_prompt = f"""System: {system_prompt}
+    # =====================================================
+    # TRINN 1: GEMINI EKSTRAHERER FAKTA
+    # =====================================================
+    gemini_facts = None
+    if gemini_model:
+        try:
+            gemini_prompt = f"""Du er en arkivforsker som analyserer Kay Fiskers tekster.
 
-### KILDEMATERIALE ###
+OPPGAVE: Basert UTELUKKENDE på kildene nedenfor, ekstraher de konkrete fakta som er relevante for spørsmålet.
+
+REGLER:
+1. Kun fakta som EKSPLISITT står i kildene - ALDRI oppfinn noe
+2. Skill mellom PRIMÆRKILDER (Fiskers egne tekster før 1965) og SEKUNDÆRKILDER (tekster OM Fisker)
+3. Inkluder konkrete: årstall, navn, bygninger, steder, tall
+4. Hvis kilden er en sekundærkilde, si "Ifølge [forfatter]..." 
+5. Hvis svaret ikke finnes i kildene, si det
+
+KILDER:
 {context}
-### SLUT PÅ KILDER ###
+
+SPØRSMÅL: {user_prompt}
+
+FAKTA (kun det som står i kildene):"""
+
+            gemini_response = gemini_model.generate_content(gemini_prompt)
+            gemini_facts = gemini_response.text.strip()
+            print(f"   ✅ Gemini ekstraherte fakta: {gemini_facts[:100]}...")
+        except Exception as e:
+            print(f"   ⚠️ Gemini feil: {e}")
+            gemini_facts = None
+    
+    # =====================================================
+    # TRINN 2: LORA OMFORMULERER I FISKERS STEMME
+    # =====================================================
+    if gemini_facts:
+        # Bruk Geminis fakta som grunnlag
+        lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
+
+FAKTA FRA ARKIVET (verifisert):
+{gemini_facts}
+
+DIN OPPGAVE: Omformuler disse fakta i din egen stemme og stil.
+
+DIN STEMME:
+- "det fineste exempel jeg har kunnet finde"
+- "det har moret mig at medtage"
+- "forekommer mig at være"
+- Vær konkret, faglig, personlig
+
+FORBUDT:
+- Å legge til fakta som ikke er nevnt ovenfor
+- Å nevne bøker eller personer etter 1965
+- Å snakke om deg selv i 3. person
+
+Svar på dansk. 4-6 sætninger.
+
+Spørsmål: {user_prompt}
+
+Kay Fisker:"""
+    else:
+        # Fallback til original metode (uten Gemini)
+        system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiet.
+
+DIN STEMME OG STIL:
+- "det fineste exempel jeg har kunnet finde"
+- "det har moret mig at medtage"
+- "forekommer mig at være"
+
+KRITISK:
+⚠️ Kilder fra EFTER 1965 er skrevet OM dig - ikke dine egne ord!
+⚠️ Brug KUN fakta fra kildene - ALDRIG oppfinn
+
+Svar på dansk. 4-6 sætninger."""
+        
+        lora_prompt = f"""System: {system_prompt}
+
+### KILDER ###
+{context}
+### SLUT ###
 
 Spørgsmål: {user_prompt}
 
 Kay Fisker:"""
     
-    # =====================================================
-    # =====================================================
-    # v10.10 PARAMETERE - balansert for syntese uten hallusinering
-    # =====================================================
+    # Generer med LoRA
     result = pipe(
-        full_prompt,
-        max_new_tokens=400,          # OPP fra 300 - unngår avkutting
-        temperature=0.40,            # NED litt fra 0.45 - mindre hallusinering
-        top_p=0.88,                  
-        top_k=45,                    
-        repetition_penalty=1.25,     # NED litt fra 1.30
+        lora_prompt,
+        max_new_tokens=350,
+        temperature=0.45,
+        top_p=0.88,
+        top_k=45,
+        repetition_penalty=1.20,
         do_sample=True
     )
     
     generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
-    generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK).*", "", generated_text, flags=re.MULTILINE).strip()
+    generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK|FAKTA).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
     # Bygg strata med FULL metadata for frontend
@@ -1032,7 +1084,7 @@ Kay Fisker:"""
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
         "genealogy": genealogy,
-        "version": "v10.12",
+        "version": "v10.13",
         "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
     }
 
