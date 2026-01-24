@@ -199,6 +199,21 @@ def fix_common_ocr_errors(txt: str) -> str:
     txt = re.sub(r'\s+,', ',', txt)
     txt = re.sub(r'\s+\.', '.', txt)
     
+    # 4. Sammenslåtte ord (vanlige OCR-feil)
+    ocr_compounds = {
+        r'fremmestkunstneren': 'fremmest kunstneren',
+        r'fremmestkunst': 'fremmest kunst',
+        r'arkitektoniskeudtryk': 'arkitektoniske udtryk',
+        r'boligberunderordne': 'boligber underordne',
+        r'funktioneltgennemarbejdet': 'funktionelt gennemarbejdet',
+        r'Corbusiersarbejde': 'Corbusiers arbejde',
+        r'blivefr?ordringsles': 'blive fordringsløs',
+        r'kampenfor': 'kampen for',
+        r'forstaaelse': 'forståelse',
+    }
+    for pattern, replacement in ocr_compounds.items():
+        txt = re.sub(pattern, replacement, txt, flags=re.IGNORECASE)
+    
     return txt
 
 def enhance_query(user_prompt: str) -> str:
@@ -804,7 +819,7 @@ async def api_chat(req: Request):
         }, 200)
     
     # =====================================================
-    # v10.7 SYSTEM PROMPT - KILDE-TVANG
+    # v10.7 SYSTEM PROMPT - KILDE-TVANG + SYNTESE
     # =====================================================
     system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt.
 
@@ -815,6 +830,7 @@ SÅDAN SVARER DU:
 1. Find 2-3 specifikke fakta i kilderne (tal, steder, navne, materialer)
 2. Byg svaret omkring DISSE fakta
 3. Brug terminologi direkte fra kilderne
+4. KOMBINER information fra FLERE kilder - ikke bare én
 
 FORBUDT (brug ALDRIG disse uden kildecitat):
 ❌ "funktionel organisation"
@@ -822,16 +838,24 @@ FORBUDT (brug ALDRIG disse uden kildecitat):
 ❌ "integration med naturen"
 ❌ "moderne arkitektur"
 ❌ "rumlig organisation"
+❌ At gentage kun ÉN sætning fra kilderne
 
 PÅBUDT:
-✅ Konkrete projektnavne fra kilderne (Pessac, Vigerslev, etc.)
-✅ Personer nævnt i kilderne (Rasmussen, Le Corbusier, Bentsen, etc.)
+✅ Konkrete projektnavne fra kilderne (Pessac, Vigerslev, Villa i Garches, etc.)
+✅ Personer nævnt i kilderne (Rasmussen, Le Corbusier, Bentsen, Wright, Gropius, etc.)
 ✅ Tekniske detaljer (mål, priser, materialer)
 ✅ Direkte parafraser fra kildeteksten
 ✅ BRUG kildens egne adjektiver og karakteristikker ordret
-✅ Hvis kilden kalder nogen "maskinromantiker" eller "naturromantiker" - BRUG disse ord
+✅ Hvis kilden kalder nogen "maskinromantiker", "naturromantiker", "artistisk" - BRUG disse ord
+✅ Hvis kilden indeholder KRITIK - inkludér kritikken i dit svar
 
-Svar på dansk. 2-4 sætninger. Vær KONKRET."""
+VIGTIGT OM MENINGER:
+Når du bliver spurgt om din mening om en person (f.eks. Le Corbusier):
+- Find BÅDE positive og kritiske udsagn i kilderne
+- Syntesér et nuanceret svar der afspejler kompleksiteten
+- Brug konkrete eksempler (bygningsnavne, årstal)
+
+Svar på dansk. 3-5 sætninger. Vær KONKRET og NUANCERET."""
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     if temporal_context:
