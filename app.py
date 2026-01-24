@@ -1,11 +1,12 @@
 """
-KAY FISKER LANGUAGE MODEL v10.14
+KAY FISKER LANGUAGE MODEL v10.15
 ================================
-GEMINI SOM ASSISTENT, IKKE PORTVAKT:
-- Begge modeller ser kildene
-- Gemini gir et "hint" om viktige fakta
-- Mistral+LoRA har alltid tilgang til originalkildene
-- Mer robust: fungerer selv om Gemini feiler
+KOMBINERER:
+- v10.14 arkitektur: Gemini som assistent, LoRA ser kilder + hint
+- v10.6 prompt: Epistemiske niveauer, kildeprioritet, Fisker-stemme
+
+Begge modeller ser kildene, Gemini gir fokus-hint,
+men LoRA får strukturert prompt for syntese og vurdering.
 """
 
 import os
@@ -890,7 +891,7 @@ async def api_chat(req: Request):
             "state": "FRAKOBLET",
             "intensity": 0.0,
             "genealogy": {},
-            "version": "v10.14"
+            "version": "v10.15"
         }, 200)
     
     # =====================================================
@@ -926,14 +927,20 @@ async def api_chat(req: Request):
     gemini_summary = ""
     if gemini_model:
         try:
-            gemini_prompt = f"""Les disse kildene og list de viktigste fakta relevant for spørsmålet.
+            gemini_prompt = f"""Les disse kildene og finn Kay Fiskers VURDERINGER og HOLDNINGER relevant for spørsmålet.
 
 KILDER:
 {context}
 
 SPØRSMÅL: {user_prompt}
 
-List 3-5 konkrete fakta (bygninger, årstall, arkitekter, steder, sitater fra kildene):"""
+List 3-5 punkter. Fokuser på:
+- Fiskers personlige vurderinger ("forekommer mig", "det fineste exempel", "jeg finder")
+- Konkrete sammenligninger han gjør mellom bygninger/arkitekter
+- Hans sosiale/ideologiske synspunkter på arkitektur
+- Spesifikke bygninger han nevner med årstall
+
+IKKE list tekniske detaljer som etasjer, materialer, priser med mindre de er del av en vurdering."""
 
             response = gemini_model.generate_content(gemini_prompt)
             gemini_summary = response.text.strip()
@@ -943,7 +950,8 @@ List 3-5 konkrete fakta (bygninger, årstall, arkitekter, steder, sitater fra ki
             gemini_summary = ""
     
     # =====================================================
-    # TRINN 2: MISTRAL+LORA FÅR ALT - kilder OG Gemini-hint
+    # TRINN 2: MISTRAL+LORA - v10.15 KOMBINERT PROMPT
+    # Arkitektur fra v10.14 + struktur fra v10.6
     # =====================================================
     
     # Bygg hint-seksjon hvis Gemini ga noe
@@ -956,18 +964,36 @@ List 3-5 konkrete fakta (bygninger, årstall, arkitekter, steder, sitater fra ki
 """
     
     lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
+Du svarer på dansk baseret på kildematerialet.
 
 ### ARKIVKILDER ###
 {context}
 ### SLUT KILDER ###
 {hint_section}
-REGLER:
-- Svar KUN basert på kildene ovenfor
-- Nevn konkrete: bygninger, årstall, steder, personer
-- Hvis kilden er fra efter 1965, er det skrevet OM dig - ikke dine egne ord
-- Bruk din naturlige stemme som arkitekt og professor
+KILDEPRIORITET:
+1. PRIMÆRE KILDER (dine egne skrifter før 1965) - brug disse FØRST
+2. Sekundære kilder (skrevet OM dig efter 1965) - kun for kontekst
+3. Reformulér ALDRIG sekundære kilder som dine egne udsagn
 
-Spørsmål: {user_prompt}
+EPISTEMISKE NIVEAUER:
+• ARKIVFAKTA: Citér/parafraser fra dine tekster eksplicit
+• ARKIV-NÆR: Kombiner kilder, markér det ("Mine skrifter viser...")
+• KONTEKST: Når arkivet er tavst, kontekstualisér ("Som arkitekt dengang...")
+
+DIN STEMME:
+- Giv personlige vurderinger: "forekommer mig", "jeg finder", "det har moret mig"
+- Sammenlign konkrete eksempler: bygninger, arkitekter, årstal
+- Vær faglig men med holdning - du er professor, ikke leksikon
+
+FORBUDT:
+- Opfinde data som ikke står i kilderne
+- Generiske modernisme-klichéer
+- Blande dansk og norsk
+- Tale om dig selv i 3. person
+
+Svar på dansk i 3-5 sætninger. Vær konkret og vurderende.
+
+Spørgsmål: {user_prompt}
 
 Kay Fisker:"""
     
@@ -975,10 +1001,10 @@ Kay Fisker:"""
     result = pipe(
         lora_prompt,
         max_new_tokens=400,
-        temperature=0.35,  # Lavere for mer presisjon
-        top_p=0.85,
-        top_k=40,
-        repetition_penalty=1.20,
+        temperature=0.40,  # Litt høyere for mer personlighet
+        top_p=0.88,
+        top_k=45,
+        repetition_penalty=1.22,
         do_sample=True
     )
     
@@ -1048,7 +1074,7 @@ Kay Fisker:"""
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
         "genealogy": genealogy,
-        "version": "v10.14",
+        "version": "v10.15",
         "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
     }
 
