@@ -25,7 +25,8 @@ RUN pip install --no-cache-dir \
     "peft" \
     "huggingface-hub" \
     "pinecone" \
-    "espnet"
+    "espnet" \
+    "google-generativeai"
 
 # Sett Hugging Face cache-mappe
 ENV HF_HOME=/app/cache
