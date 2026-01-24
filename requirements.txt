@@ -1,10 +1,4 @@
---upgrade-strategy eager
-pip uninstall -y pinecone-client
-pip uninstall -y pinecone
 pinecone>=4.1.0
-
-
-
 torch
 torchvision
 torchaudio
@@ -12,7 +6,6 @@ transformers[sentencepiece]
 accelerate==0.30.1
 peft==0.11.1
 sentence-transformers
-pinecone
 gradio==4.36.1
 numpy
 huggingface-hub
@@ -20,14 +13,8 @@ opencv-python
 fastapi
 uvicorn
 requests
-
-# espnet (speech synthesis / recognition)
 espnet==202402
-
-# --- FIX for Hugging Face numba caching bug ---
 numba==0.58.1
 librosa==0.10.1
 soundfile
-# v10.13: Gemini for to-trinns arkitektur
 google-generativeai
-
