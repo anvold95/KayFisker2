@@ -171,6 +171,36 @@ def normalize_orthography(txt: str) -> str:
     txt = re.sub(r"\s{2,}", " ", txt).strip()
     return txt
 
+def fix_common_ocr_errors(txt: str) -> str:
+    """
+    Fikser vanlige OCR-feil i arkivtekst.
+    Kjøres på kildetekst FØR den sendes til modellen.
+    """
+    if not txt:
+        return txt
+    
+    # 1. Årstall: "192829" → "1928-29", "193539" → "1935-39"
+    def fix_year_range(match):
+        digits = match.group(0)
+        if len(digits) == 6:
+            return f"{digits[:4]}-{digits[4:]}"
+        elif len(digits) == 8:
+            return f"{digits[:4]}-{digits[4:]}"
+        return digits
+    
+    txt = re.sub(r'\b(19\d{4})\b', fix_year_range, txt)
+    txt = re.sub(r'\b(19\d{6})\b', fix_year_range, txt)
+    txt = re.sub(r'\b(20\d{4})\b', fix_year_range, txt)
+    
+    # 2. "Opførelsesaar" varianter
+    txt = re.sub(r'Opf[øo]relsesa+r\s*:', 'Opførelsesår:', txt, flags=re.IGNORECASE)
+    
+    # 3. Spacing-fixes
+    txt = re.sub(r'\s+,', ',', txt)
+    txt = re.sub(r'\s+\.', '.', txt)
+    
+    return txt
+
 def enhance_query(user_prompt: str) -> str:
     """
     MINIMAL query expansion v10.7
@@ -691,7 +721,10 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
     for ns, matches in pool.items():
         for m in matches:
             md = m.get("metadata") or {}
-            txt = clean_text(normalize_orthography(md.get("text") or ""))
+            txt = md.get("text") or ""
+            txt = normalize_orthography(txt)
+            txt = fix_common_ocr_errors(txt)
+            txt = clean_text(txt)
             if len(txt.split()) > 8:
                 md["text"] = txt
                 cleaned_pool[ns].append(m)
@@ -795,6 +828,8 @@ PÅBUDT:
 ✅ Personer nævnt i kilderne (Rasmussen, Le Corbusier, Bentsen, etc.)
 ✅ Tekniske detaljer (mål, priser, materialer)
 ✅ Direkte parafraser fra kildeteksten
+✅ BRUG kildens egne adjektiver og karakteristikker ordret
+✅ Hvis kilden kalder nogen "maskinromantiker" eller "naturromantiker" - BRUG disse ord
 
 Svar på dansk. 2-4 sætninger. Vær KONKRET."""
     
