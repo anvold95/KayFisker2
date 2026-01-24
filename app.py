@@ -48,7 +48,7 @@ if HF_TOKEN:
         print(f"⚠️ Hugging Face Login feil: {e}")
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv")
+INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv-dansk")
 EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
 
 # =====================================================
