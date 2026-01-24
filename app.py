@@ -1,13 +1,12 @@
 """
-KAY FISKER LANGUAGE MODEL v10.9
-===============================
-ENDRINGER FRA v10.8:
-- Chain-of-thought prompting: Modellen må TENKE før den svarer
-- Eksplisitt forbud mot ordrett kopiering
-- Konkret DÅRLIG vs GOD eksempel i prompt
-- Temperature: 0.35 → 0.45 (mer kreativ syntese)
-- repetition_penalty: 1.25 → 1.30
-- Valgfri Mixtral 8x7B støtte (USE_MIXTRAL=true)
+KAY FISKER LANGUAGE MODEL v10.10
+================================
+ENDRINGER FRA v10.9:
+- Forenklet prompt: Fjernet kompliserte FORBUDT/PÅBUDT-lister
+- Sterkere 1. person instruks: "Du SKAL svare i 1. person"
+- Anti-hallusinering: "ALDRIG oppfinn steder eller fakta"
+- Bedre kilde-format: [Fra 'titel', år] prefix
+- Økt max_new_tokens til 400 for å unngå avkutting
 """
 
 import os
@@ -49,7 +48,7 @@ if HF_TOKEN:
         print(f"⚠️ Hugging Face Login feil: {e}")
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-corpus-1024")
+INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv")
 EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
 
 # =====================================================
@@ -735,7 +734,7 @@ def _fetch_ns(ns: str, qvec, top_k: int):
 
 def pinecone_search_logic(user_prompt: str, total_results: int = 8):
     """
-    RAG-søk med PRIMARY-first strategi v10.7
+    RAG-søk med PRIMARY-first strategi v10.10
     """
     if not (pinecone_index and embedder):
         print("⚠️ Pinecone eller embedder ikke tilgjengelig")
@@ -746,7 +745,7 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
     print(f"   ↳ Ekspandert til: '{enhanced}'")
     qvec = embedder.encode(enhanced).tolist()
     
-    # ØKT quota for primary
+    # Hent fra alle namespaces
     ns_quotas = {"primary": 10, "secondary": 4, "quotes": 3}
     pool = defaultdict(list)
     
@@ -777,7 +776,7 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
             scores = reranker.predict(pairs)
             cleaned_pool[ns] = [x for _, x in sorted(zip(scores, cleaned_pool[ns]), key=lambda z: z[0], reverse=True)]
 
-    # PRIMARY-FIRST SELECTION v10.7
+    # PRIMARY-FIRST SELECTION
     final_selection = []
     
     # Start med 3 PRIMARY
@@ -813,7 +812,9 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
     
     for i, m in enumerate(final_selection):
         md = m["metadata"]
-        print(f"      [{i+1}] {md.get('__ns', '?').upper()} | {md.get('year', '?')} | {md.get('text', '')[:60]}...")
+        title = md.get('title', md.get('__ns', '?').upper())
+        year = md.get('year', '?')
+        print(f"      [{i+1}] {title} ({year}) | {md.get('text', '')[:50]}...")
     
     return final_selection
 
@@ -838,69 +839,50 @@ async def api_chat(req: Request):
             "state": "FRAKOBLET",
             "intensity": 0.0,
             "genealogy": {},
-            "version": "v10.8"
+            "version": "v10.10"
         }, 200)
     
     # =====================================================
-    # v10.9 SYSTEM PROMPT - CHAIN-OF-THOUGHT + SYNTESE
-    # Modellen må TENKE og FORSTÅ før den svarer
+    # v10.10 SYSTEM PROMPT - FORENKLET + EFFEKTIV
+    # Inspirert av Gemini-promptens enkelhet, men med syntese
     # =====================================================
-    system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt.
+    system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt. Du svarer i 1. person som om du er Fisker selv.
 
-DIN OPGAVE:
-Du skal svare på spørgsmål ved at FORSTÅ og SYNTETISERE kildematerialet - 
-IKKE ved at kopiere sætninger ordret.
+HVORDAN DU SVARER:
+1. Svar KUN basert på kilderne nedenfor - ALDRIG oppfinn steder, navn eller fakta
+2. Syntetisér informationen med dine egne ord - kopier ikke sætninger ordret
+3. Vær konkret: nævn årstal, bygningsnavne, personer fra kilderne
+4. Vis nuance: hvis kilderne indeholder både ros og kritik, inkludér begge
+5. Svar i 1. person ("jeg", "mit arbejde", "mine kolleger")
 
-TÆNK FØRST (internt, skriv ikke ud):
-1. Hvad handler kilderne EGENTLIG om? Hvad er KONTEKSTEN?
-2. Hvad er MIN (Kay Fiskers) HOLDNING til emnet?
-3. Hvilke KONKRETE EKSEMPLER kan jeg bruge?
-4. Hvordan ville JEG formulere dette med MINE egne ord?
+HVIS SVARET IKKE FINDES I KILDERNE:
+Sig ærligt at du ikke kan svare på det ud fra det tilgængelige materiale.
 
-KRITISKE REGLER:
-• ALDRIG kopier en hel sætning ordret fra kilderne
-• ALTID reformuler med dine egne ord
-• KOMBINER indsigter fra FLERE kilder
-• VÆR SPECIFIK: nævn navne, værker, årstal
-• VÆR NUANCERET: vis at du forstår kompleksiteten
+EKSEMPEL PÅ GOD TONE:
+"I mine undersøgelser af de københavnske boligtyper fra 1936 fandt jeg, at..."
+"Sammen med C.F. Møller arbejdede jeg på universitetet i Aarhus, hvor vi..."
+"Le Corbusier repræsenterer for mig den artistiske tilgang, mens Wright..."
 
-FORBUDT:
-❌ At kopiere sætninger direkte fra kilderne
-❌ "funktionel organisation", "lyshed og transparens" (generiske fraser)
-❌ At bruge kun ÉN kilde
-❌ Svar der lyder som en Wikipedia-artikel
-
-PÅBUDT:
-✅ Konkrete navne: Wright, Gropius, Asplund, Le Corbusier, Bentsen, Rasmussen
-✅ Konkrete værker: Villa i Garches, Weissenhofsiedlung, Vigerslev Allé, etc.
-✅ Kildens adjektiver: "maskinromantiker", "naturromantiker", "socialt indstillet"
-✅ Kritiske perspektiver hvis kilderne indeholder dem
-
-EKSEMPEL PÅ DÅRLIGT SVAR (kopierer ordret):
-"Le Corbusier er først og fremmest kunstneren, den artistisk betonede."
-
-EKSEMPEL PÅ GODT SVAR (syntetiserer og forstår):
-"Blandt de store internationale arkitekter ser jeg Le Corbusier som den mest 
-artistisk orienterede - en latinskinspireret maskinromantiker, om man vil. 
-Hans tilgang adskiller sig markant fra Wrights organiske naturromantik og 
-Gropius' sociale engagement. Men netop denne kunstneriske betoning kan blive 
-problematisk når den moderne bolig skal være beskeden og funktionel."
-
-Svar på dansk. 3-5 sætninger. SYNTETISÉR, kopier ikke."""
+Svar på dansk. 4-6 sætninger. Vær faglig, præcis og personlig."""
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     if temporal_context:
         system_prompt += f"\n\nTidsperiode:\n{temporal_context}"
     
     # =====================================================
-    # v10.7: NUMMEREREDE KILDER
+    # v10.10: KILDE-FORMAT MED TITTEL-PREFIX
+    # Inspirert av Gemini: [Fra 'titel', år]
     # =====================================================
     source_lines = []
     for i, m in enumerate(matches, 1):
-        text = m["metadata"].get("text", "")[:450]  # Litt mer kontekst
+        text = m["metadata"].get("text", "")[:600]  # Mer kontekst
         source_type = m["metadata"].get("__ns", "primary").upper()
         year = m["metadata"].get("year", "?")
-        source_lines.append(f"[KILDE {i}] ({source_type}, {year}):\n{text}")
+        title = m["metadata"].get("title", "Arkiv")
+        author = m["metadata"].get("author", "Kay Fisker")
+        
+        # Gemini-stil prefix som hjelper modellen forstå kontekst
+        source_lines.append(f"[KILDE {i} - Fra '{title}', {year}]:\n{text}")
     
     context = "\n\n".join(source_lines)
     
@@ -910,30 +892,25 @@ Svar på dansk. 3-5 sætninger. SYNTETISÉR, kopier ikke."""
 {context}
 ### SLUT PÅ KILDER ###
 
-VIGTIGE SPØRGSMÅL TIL DIG SELV FØR DU SVARER:
-- Hvad er hovedpointerne i kilderne?
-- Hvad er MIN personlige holdning som Kay Fisker?
-- Hvordan kan jeg formulere dette UDEN at kopiere ordret?
-
 Spørgsmål: {user_prompt}
 
-Kay Fisker (svar med egne ord, syntetisér fra kilderne):"""
+Kay Fisker:"""
     
     # =====================================================
     # =====================================================
-    # v10.9 PARAMETERE - høyere temperature for kreativ syntese
+    # v10.10 PARAMETERE - balansert for syntese uten hallusinering
     # =====================================================
     result = pipe(
         full_prompt,
-        max_new_tokens=300,          # OPP fra 250
-        temperature=0.45,            # OPP fra 0.35 for kreativitet
-        top_p=0.90,                  # OPP fra 0.88
-        top_k=50,                    # OPP fra 40
-        repetition_penalty=1.30,     # OPP fra 1.25 - straffer kopiering
+        max_new_tokens=400,          # OPP fra 300 - unngår avkutting
+        temperature=0.40,            # NED litt fra 0.45 - mindre hallusinering
+        top_p=0.88,                  
+        top_k=45,                    
+        repetition_penalty=1.25,     # NED litt fra 1.30
         do_sample=True
     )
     
-    generated_text = result[0]["generated_text"].split("Kay Fisker (svar med egne ord, syntetisér fra kilderne):")[-1].strip()
+    generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
     generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
@@ -992,7 +969,7 @@ Kay Fisker (svar med egne ord, syntetisér fra kilderne):"""
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
         "genealogy": genealogy,
-        "version": "v10.9",
+        "version": "v10.10",
         "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
     }
 
