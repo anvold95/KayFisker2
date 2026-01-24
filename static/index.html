@@ -1,1227 +1,1040 @@
-<!DOCTYPE html>
-<html lang="da">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Genealogisk Apparat v.10.4</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/lucide@latest"></script>
-</head>
-<body className="bg-[#f2f2f2] selection:bg-red-200 overflow-hidden">
-    <div id="root"></div>
+"""
+KAY FISKER LANGUAGE MODEL v10.11
+================================
+ENDRINGER FRA v10.10:
+- AUTENTISK FISKER-STEMME: Basert på hans faktiske skrivestil
+- Konkrete eksempler fra hans tekster i prompten
+- Personlige vurderinger: "forekommer mig", "det har moret mig"
+- Teknisk presisjon + historisk kontekstualisering
+"""
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
+import os
+import json
+import re
+import torch
+import numpy as np
+import soundfile as sf
+from datetime import datetime
+from collections import defaultdict, Counter
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.concurrency import run_in_threadpool
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from peft import PeftModel
+from sentence_transformers import SentenceTransformer, CrossEncoder, util
+from pinecone import Pinecone, ServerlessSpec
+from huggingface_hub import hf_hub_download, login, whoami
+from scipy.spatial.distance import cosine
+from sklearn.cluster import DBSCAN
 
-        const LucideIcon = ({ name, className = "", size = 16 }) => {
-            const containerRef = useRef(null);
-            useEffect(() => {
-                if (containerRef.current && window.lucide?.icons?.[name]) {
-                    containerRef.current.innerHTML = '';
-                    containerRef.current.innerHTML = window.lucide.icons[name].toSvg({
-                        width: size, height: size, class: className
-                    });
-                }
-            }, [name, className, size]);
-            return <span ref={containerRef} className="inline-flex items-center justify-center" />;
-        };
+try:
+    from text_cleaner import clean_text
+except ImportError:
+    def clean_text(text): return text.strip()
 
-        const App = () => {
-            const [documentText, setDocumentText] = useState("");
-            const [lastQuery, setLastQuery] = useState("");
-            const [activeStrata, setActiveStrata] = useState([]);
-            const [visualNodes, setVisualNodes] = useState([]); 
-            const [detectedVisuals, setDetectedVisuals] = useState([]);
-            const [genealogy, setGenealogy] = useState(null);
-            const [syntheticResponse, setSyntheticResponse] = useState("");
-            const [isSynthesizing, setIsSynthesizing] = useState(false);
-            const [selectedSources, setSelectedSources] = useState([]);
-            const [hoveredSource, setHoveredSource] = useState(null);
-            const [logs, setLogs] = useState([]);
-            const [expandedVisual, setExpandedVisual] = useState(null);
-            const [discursiveState, setDiscursiveState] = useState("SEDIMENTERING");
-            const [intensity, setIntensity] = useState(0.0);
+# --- MILJØKONFIGURASJON ---
+os.environ["HF_HOME"] = "/app/cache"
+os.environ["HF_HUB_CACHE"] = "/app/cache"
+os.environ["TRANSFORMERS_CACHE"] = "/app/cache"
+
+HF_TOKEN = os.environ.get("HF_TOKEN")
+if HF_TOKEN:
+    try:
+        login(token=HF_TOKEN)
+        print(f"✅ Logget inn på Hugging Face som: {whoami().get('name')}")
+    except Exception as e:
+        print(f"⚠️ Hugging Face Login feil: {e}")
+
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
+INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv")
+EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"  # 768-dim (matcher Gemini-arkiv)
+
+# =====================================================
+# v10.9: MODELL-KONFIGURASJON
+# Sett USE_MIXTRAL=true for bedre reasoning (krever mer GPU)
+# =====================================================
+USE_MIXTRAL = os.environ.get("USE_MIXTRAL", "false").lower() == "true"
+
+if USE_MIXTRAL:
+    BASE_MODEL = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    print("🧠 Konfigurert for Mixtral 8x7B (bedre reasoning, ingen LoRA)")
+else:
+    BASE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+    print("🧠 Konfigurert for Mistral 7B + LoRA")
+
+# Last timeline
+FISKER_TIMELINE = ""
+try:
+    if os.path.exists("timeline_fisker.txt"):
+        with open("timeline_fisker.txt", "r", encoding="utf-8") as f:
+            FISKER_TIMELINE = f.read().strip()
+except Exception as e:
+    print(f"⚠️ Kunne ikke laste timeline: {e}")
+
+app = FastAPI()
+
+# --- GLOBALE VARIABLER ---
+pipe = None
+tts = None
+tokenizer = None
+embedder = None
+reranker = None
+pinecone_index = None
+
+# --- VISUAL DATABASE ---
+VISUALS_DB = {
+    "vestersøhus": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Vesters%C3%B8hus_01.jpg/640px-Vesters%C3%B8hus_01.jpg", "type": "FOTO"},
+    "dronningegården": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Dronningeg%C3%A5rden_Copenhagen_02.jpg/640px-Dronningeg%C3%A5rden_Copenhagen_02.jpg", "type": "FOTO"},
+    "gullfoss": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Gullfoss_Copenhagen_01.jpg/640px-Gullfoss_Copenhagen_01.jpg", "type": "FOTO"},
+    "gullfosshus": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Gullfoss_Copenhagen_01.jpg/640px-Gullfoss_Copenhagen_01.jpg", "type": "FOTO"},
+    "aarhus universitet": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Aarhus_Universitet_01.jpg/640px-Aarhus_Universitet_01.jpg", "type": "FOTO"},
+    "statsprøveanstalten": {"url": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Statspr%C3%B8veanstalten_01.jpg/640px-Statspr%C3%B8veanstalten_01.jpg", "type": "FOTO"},
+}
+
+# --- FOUCAULDIANSKE NØKKELORD ---
+GENEALOGICAL_CONCEPTS = [
+    "funksjonalisme", "funktionalism", "tradisjon", "tradition", "modernisme", 
+    "klassisisme", "bolig", "bebyggelse", "bymæssig", "monumentalitet",
+    "materialitet", "tektonik", "proportioner", "skala", "rumlig",
+    "social", "samfund", "arbejder", "kollektiv", "privat",
+    "hygiejne", "sundhed", "lys", "luft",
+    "standardisering", "industrialisering", "håndværk", "præfabrikation"
+]
+
+# --- MODELL-LASTING ---
+def load_model_logic():
+    global pipe, tts, tokenizer, embedder, reranker, pinecone_index
+    
+    LORA = "anvold/fisker-lora-clean"
+    
+    if USE_MIXTRAL:
+        print(f"🧩 Laster Mixtral 8x7B (uten LoRA) …")
+    else:
+        print(f"🧩 Laster Mistral 7B + LoRA-adapter …")
+    
+    # LoRA adapter fix (kun for Mistral 7B)
+    if not USE_MIXTRAL:
+        try:
+            adapter_path = hf_hub_download(LORA, "adapter_config.json")
+            with open(adapter_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            allowed_keys = {
+                "base_model_name_or_path", "bias", "inference_mode", "lora_alpha",
+                "lora_dropout", "r", "target_modules", "task_type", "peft_type",
+                "fan_in_fan_out", "use_rslora", "alpha_pattern", "rank_pattern"
+            }
+            cfg = {k: v for k, v in cfg.items() if k in allowed_keys}
+            with open(adapter_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Feil under adapter-fix: {e}")
+
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch_dtype = torch.float16 if device == "cuda" else torch.float32
+
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        torch_dtype=torch_dtype,
+        device_map="auto",
+    )
+
+    if USE_MIXTRAL:
+        model = base_model
+        print("✅ Mixtral 8x7B lastet (ren base-modell)")
+    else:
+        model = PeftModel.from_pretrained(base_model, LORA)
+        model = model.merge_and_unload()
+        print("✅ Mistral 7B + LoRA merged")
+    model.eval()
+
+    pipe = pipeline(
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
+        torch_dtype=torch_dtype,
+        device_map="auto",
+    )
+
+    print("🎙️ Laster TTS …")
+    try:
+        from transformers import pipeline as hf_pipeline_tool
+        tts = hf_pipeline_tool("text-to-speech", model="espnet/kan-bayashi_ljspeech_vits")
+        print("✅ TTS klar.")
+    except Exception as e:
+        print(f"⚠️ TTS feilet: {e}")
+
+    print("🧠 Kobler til Pinecone …")
+    if PINECONE_API_KEY:
+        try:
+            pc = Pinecone(api_key=PINECONE_API_KEY)
+            pinecone_index = pc.Index(INDEX_NAME)
+            embedder = SentenceTransformer(EMBED_MODEL)
+            reranker = CrossEncoder("BAAI/bge-reranker-base")
+            print(f"✅ RAG aktiv på '{INDEX_NAME}'.")
+        except Exception as e:
+            print(f"❌ Pinecone feil: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    load_model_logic()
+
+# --- HJELPEFUNKSJONER ---
+def normalize_orthography(txt: str) -> str:
+    """Normaliserer OCR-tekst og fjerner bindestreker"""
+    if not txt: return txt
+    txt = re.sub(r"(\w+)-\n(\w+)", r"\1\2", txt)
+    txt = re.sub(r"[ \t]*\n[ \t]*", " ", txt)
+    txt = re.sub(r"\s{2,}", " ", txt).strip()
+    return txt
+
+def fix_common_ocr_errors(txt: str) -> str:
+    """
+    Fikser vanlige OCR-feil i arkivtekst.
+    Kjøres på kildetekst FØR den sendes til modellen.
+    """
+    if not txt:
+        return txt
+    
+    # 1. Årstall: "192829" → "1928-29", "193539" → "1935-39"
+    def fix_year_range(match):
+        digits = match.group(0)
+        if len(digits) == 6:
+            return f"{digits[:4]}-{digits[4:]}"
+        elif len(digits) == 8:
+            return f"{digits[:4]}-{digits[4:]}"
+        return digits
+    
+    txt = re.sub(r'\b(19\d{4})\b', fix_year_range, txt)
+    txt = re.sub(r'\b(19\d{6})\b', fix_year_range, txt)
+    txt = re.sub(r'\b(20\d{4})\b', fix_year_range, txt)
+    
+    # 2. "Opførelsesaar" varianter
+    txt = re.sub(r'Opf[øo]relsesa+r\s*:', 'Opførelsesår:', txt, flags=re.IGNORECASE)
+    
+    # 3. Spacing-fixes
+    txt = re.sub(r'\s+,', ',', txt)
+    txt = re.sub(r'\s+\.', '.', txt)
+    
+    # 4. Sammenslåtte ord (vanlige OCR-feil)
+    ocr_compounds = {
+        r'fremmestkunstneren': 'fremmest kunstneren',
+        r'fremmestkunst': 'fremmest kunst',
+        r'arkitektoniskeudtryk': 'arkitektoniske udtryk',
+        r'boligberunderordne': 'boligber underordne',
+        r'funktioneltgennemarbejdet': 'funktionelt gennemarbejdet',
+        r'Corbusiersarbejde': 'Corbusiers arbejde',
+        r'blivefr?ordringsles': 'blive fordringsløs',
+        r'kampenfor': 'kampen for',
+        r'forstaaelse': 'forståelse',
+    }
+    for pattern, replacement in ocr_compounds.items():
+        txt = re.sub(pattern, replacement, txt, flags=re.IGNORECASE)
+    
+    return txt
+
+def enhance_query(user_prompt: str) -> str:
+    """
+    MINIMAL query expansion v10.7
+    - Kun konkrete værker får expansion
+    - Alt annet: trust embedder
+    """
+    prompt_lower = user_prompt.lower()
+    
+    # KUN konkrete byggværker - ingen andre patterns
+    works_map = {
+        "vestersøhus": "Vestersøhus Vester Søgade 1935 Kay Fisker boligblokk",
+        "dronningegården": "Dronningegården Dronningens Tværgade 1943 Kay Fisker",
+        "vigerslev": "Vigerslev Allé Ivar Bentsen rækkehuse",
+        "aarhus": "Aarhus Universitet C.F. Møller Kay Fisker hovedbygning",
+        "hornbæk": "Hornbækhus 1923 Kay Fisker landsted",
+        "bakkehus": "Bakkehusene Ivar Bentsen Thorkild Henningsen",
+        "gullfoss": "Gullfosshus Artillerivej Kay Fisker",
+    }
+    
+    for work, expansion in works_map.items():
+        if work in prompt_lower:
+            print(f"   🎯 Konkret værk detekteret: {work}")
+            return expansion
+    
+    # Alt annet: Legg kun til "Kay Fisker" hvis mangler
+    if "fisker" not in prompt_lower:
+        return f"Kay Fisker {user_prompt}"
+    
+    return user_prompt  # INGEN expansion - trust embedder
+
+def extract_temporal_context(user_prompt: str, timeline: str) -> str:
+    """Henter relevante timeline-segmenter"""
+    if not timeline:
+        return ""
+    
+    periods = []
+    for line in timeline.split("\n"):
+        if match := re.match(r"(\d{4})[-–]?(\d{4})?: (.+)", line):
+            start, end, event = match.groups()
+            periods.append({
+                "start": int(start),
+                "end": int(end) if end else int(start),
+                "event": event.strip()
+            })
+    
+    keywords = set(user_prompt.lower().split())
+    relevant = []
+    
+    for p in periods:
+        event_words = set(p["event"].lower().split())
+        if keywords & event_words:
+            relevant.append(p)
+    
+    if relevant:
+        return "\n".join([f"{p['start']}: {p['event']}" for p in relevant[:3]])
+    
+    return ""
+
+def extract_visuals(text: str) -> list:
+    """Finner visuelle referanser"""
+    found = []
+    text_lower = text.lower()
+    for key, data in VISUALS_DB.items():
+        if key in text_lower:
+            found.append({"keyword": key, "url": data["url"], "type": data["type"]})
+    return found
+
+# --- SEGMENT-EKSTRAKSJON ---
+def extract_most_relevant_excerpt(source_text: str, response_text: str, min_words: int = 20, max_words: int = 80) -> dict:
+    """Finner mest relevante utdrag fra kilden"""
+    if not embedder or not source_text or not response_text:
+        return {
+            "excerpt": source_text[:200] if len(source_text) > 200 else source_text,
+            "relevance": 0.0,
+            "method": "fallback",
+            "explanation": "Ingen semantisk analyse tilgjengelig"
+        }
+    
+    sentences = re.split(r'(?<=[.!?])\s+', source_text)
+    if not sentences or len(sentences) < 3:
+        return {
+            "excerpt": source_text[:200],
+            "relevance": 0.0,
+            "method": "fallback",
+            "explanation": "For kort kildetekst"
+        }
+    
+    windows = []
+    for window_size in [3, 4, 5]:
+        for i in range(len(sentences) - window_size + 1):
+            window_text = " ".join(sentences[i:i+window_size])
+            word_count = len(window_text.split())
+            if min_words <= word_count <= max_words:
+                windows.append({
+                    "text": window_text,
+                    "start_idx": i,
+                    "size": window_size
+                })
+    
+    if not windows:
+        words = source_text.split()[:max_words]
+        return {
+            "excerpt": " ".join(words),
+            "relevance": 0.0,
+            "method": "truncation",
+            "explanation": "Ingen passende vinduer funnet"
+        }
+    
+    response_emb = embedder.encode(response_text, convert_to_tensor=True)
+    window_texts = [w["text"] for w in windows]
+    window_embs = embedder.encode(window_texts, convert_to_tensor=True)
+    similarities = util.cos_sim(response_emb, window_embs)[0].cpu().numpy()
+    
+    best_idx = int(np.argmax(similarities))
+    best_score = float(similarities[best_idx])
+    
+    if best_score > 0.65:
+        explanation = "Høy semantisk overlapp"
+    elif best_score > 0.50:
+        explanation = "Moderat overlapp"
+    elif best_score > 0.35:
+        explanation = "Kontekstuell bakgrunn"
+    else:
+        explanation = "Minimal overlapp"
+    
+    return {
+        "excerpt": windows[best_idx]["text"],
+        "relevance": best_score,
+        "method": "semantic_matching",
+        "explanation": explanation
+    }
+
+def find_attributable_segments(source_text: str, response_text: str, threshold: float = 0.50) -> list:
+    """Finner segmenter som bidrar til responsen"""
+    if not embedder:
+        return []
+
+    source_words = source_text.split()
+    if len(source_words) < 10:
+        return []
+
+    segments = []
+    window_size = 20
+    step = 8
+
+    for i in range(0, len(source_words) - window_size + 1, step):
+        segments.append({
+            "text": " ".join(source_words[i:i+window_size]),
+            "start_idx": i,
+            "end_idx": i + window_size
+        })
+
+    if not segments:
+        return []
+
+    response_emb = embedder.encode(response_text, convert_to_tensor=True)
+    segment_embs = embedder.encode([s["text"] for s in segments], convert_to_tensor=True)
+    similarities = util.cos_sim(response_emb, segment_embs)[0].cpu().numpy()
+
+    attributed = []
+    for idx, sim in enumerate(similarities):
+        if sim > threshold:
+            attributed.append({
+                "text": segments[idx]["text"],
+                "similarity": float(sim),
+                "position": segments[idx]["start_idx"],
+                "confidence": "high" if sim > 0.70 else "medium"
+            })
+    
+    attributed.sort(key=lambda x: x["similarity"], reverse=True)
+    return attributed[:2]
+
+# --- GENEALOGISK ANALYSE ---
+
+def detect_discursive_shifts(strata: list) -> dict:
+    """Detekterer diskursive brudd over tid"""
+    if not embedder or len(strata) < 3:
+        return {"shifts": [], "periods": []}
+    
+    sorted_strata = sorted([s for s in strata if s.get("year")], key=lambda x: int(x["year"]))
+    
+    if len(sorted_strata) < 3:
+        return {"shifts": [], "periods": []}
+    
+    texts = [s["text"] for s in sorted_strata]
+    embeddings = embedder.encode(texts, convert_to_tensor=True)
+    
+    shifts = []
+    for i in range(len(sorted_strata) - 1):
+        distance = cosine(
+            embeddings[i].cpu().numpy(),
+            embeddings[i+1].cpu().numpy()
+        )
+        
+        if distance > 0.35:
+            # v10.11: Ekstraher nøkkelord som viser HVA som endret seg
+            text_a = sorted_strata[i]["text"].lower()
+            text_b = sorted_strata[i+1]["text"].lower()
             
-            const [draggedNode, setDraggedNode] = useState(null);
-            const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+            # Finn ord som er unike for hver tekst
+            words_a = set(text_a.split())
+            words_b = set(text_b.split())
+            unique_to_a = [w for w in words_a - words_b if len(w) > 5][:3]
+            unique_to_b = [w for w in words_b - words_a if len(w) > 5][:3]
             
-            const [selectedConcept, setSelectedConcept] = useState(null);
-            const [showGenealogy, setShowGenealogy] = useState(false);
+            # Beskriv bruddet
+            if distance > 0.5:
+                description = f"Markant skifte i diskurs: fra fokus på {', '.join(unique_to_a) if unique_to_a else 'tidligere temaer'} til {', '.join(unique_to_b) if unique_to_b else 'nye temaer'}"
+            else:
+                description = f"Gradvis endring i terminologi og fokus"
             
-            const [viewport, setViewport] = useState({ 
-                w: typeof window !== 'undefined' ? window.innerWidth : 1200, 
-                h: typeof window !== 'undefined' ? window.innerHeight : 800 
-            });
+            shifts.append({
+                "year_from": sorted_strata[i]["year"],
+                "year_to": sorted_strata[i+1]["year"],
+                "distance": float(distance),
+                "type": "MAJOR_SHIFT" if distance > 0.5 else "MINOR_SHIFT",
+                "source_a": sorted_strata[i]["ref"],
+                "source_b": sorted_strata[i+1]["ref"],
+                # NY: Forklaring av hva bruddet handler om
+                "description": description,
+                "keywords_before": unique_to_a,
+                "keywords_after": unique_to_b
+            })
+    
+    if len(embeddings) >= 3:
+        clustering = DBSCAN(eps=0.3, min_samples=2, metric='cosine')
+        labels = clustering.fit_predict(embeddings.cpu().numpy())
+        
+        periods = []
+        for label in set(labels):
+            if label == -1:
+                continue
+            indices = [i for i, l in enumerate(labels) if l == label]
+            period_strata = [sorted_strata[i] for i in indices]
+            years = [int(s["year"]) for s in period_strata]
+            
+            periods.append({
+                "period_id": int(label),
+                "year_range": f"{min(years)}-{max(years)}",
+                "source_count": len(period_strata),
+                "sources": [s["ref"] for s in period_strata],
+                "coherence": "HIGH"
+            })
+    else:
+        periods = []
+    
+    return {
+        "shifts": shifts,
+        "periods": periods,
+        "total_sources": len(sorted_strata),
+        "temporal_span": f"{sorted_strata[0]['year']}-{sorted_strata[-1]['year']}" if sorted_strata else None
+    }
 
-            const rams = {
-                red: "rgba(227, 34, 25, 0.7)",
-                blue: "rgba(0, 107, 180, 0.7)",
-                orange: "rgba(255, 160, 0, 0.6)",
-                green: "rgba(34, 197, 94, 0.6)"
-            };
-
-            const addLog = (msg) => {
-                setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg }].slice(-3));
-            };
-
-            useEffect(() => {
-                const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
-                window.addEventListener('resize', onResize);
-                
-                // Oppdater viewport når sidebar toggles
-                const timer = setTimeout(() => {
-                    setViewport({ w: window.innerWidth, h: window.innerHeight });
-                }, 100);
-                
-                return () => {
-                    window.removeEventListener('resize', onResize);
-                    clearTimeout(timer);
-                };
-            }, [selectedSources.length, showGenealogy]);
-
-            const getSmartPosition = (year, existingNodes = []) => {
-                const allNodes = [...activeStrata, ...visualNodes, ...existingNodes];
-                const yearNum = parseInt(year) || 1950;
-                const age = 2024 - yearNum;
-                const baseDepth = 15 + Math.min((age / 100) * 60, 60);
-                
-                // Forbudt område (svarsboks)
-                const forbiddenZone = { xMin: 10, xMax: 90, yMin: 65, yMax: 100 };
-                const minDistance = 30; // Minimum avstand mellom noder ved spawning
-                
-                const isValidPosition = (x, y) => {
-                    // Hard reject på forbidden zone
-                    if (x >= forbiddenZone.xMin && x <= forbiddenZone.xMax &&
-                        y >= forbiddenZone.yMin && y <= forbiddenZone.yMax) return false;
+def trace_concept_genealogy(strata: list, concept: str) -> dict:
+    """Sporer begrepets genealogi"""
+    if not strata:
+        return {"concept": concept, "occurrences": [], "semantic_drift": []}
+    
+    occurrences = []
+    
+    for s in strata:
+        text_lower = s["text"].lower()
+        if concept.lower() in text_lower:
+            words = s["text"].split()
+            for i, word in enumerate(words):
+                if concept.lower() in word.lower():
+                    start = max(0, i - 25)
+                    end = min(len(words), i + 25)
+                    context = " ".join(words[start:end])
                     
-                    // Viewport boundaries (ikke for strenge)
-                    if (x < 3 || x > 97 || y < 3 || y > 72) return false;
-                    
-                    // VIKTIG: Sjekk at vi ikke spawner oppå andre noder
-                    for (const node of allNodes) {
-                        const dx = Math.abs(node.pos.x - x);
-                        const dy = Math.abs(node.pos.y - y);
-                        const distance = Math.sqrt(dx * dx + dy * dy);
-                        if (distance < minDistance) return false;
-                    }
-                    
-                    return true;
-                };
-                
-                // Prøv concentric circles
-                for (let radius = 0; radius <= 50; radius += 10) {
-                    for (let i = 0; i < 28; i++) {
-                        const angle = (i / 28) * 2 * Math.PI;
-                        const x = 50 + radius * Math.cos(angle);
-                        const y = baseDepth + radius * 0.4 * Math.sin(angle);
-                        if (isValidPosition(x, y)) return { x, y };
-                    }
-                }
-                
-                // Grid search - STØRRE område
-                for (let y = 8; y <= 70; y += 8) {
-                    for (let x = 8; x <= 92; x += 8) {
-                        if (isValidPosition(x, y)) return { x, y };
-                    }
-                }
-                
-                // Fallback - sides
-                return { x: allNodes.length % 2 === 0 ? 8 : 92, y: 20 };
-            };
+                    occurrences.append({
+                        "year": s.get("year", "unknown"),
+                        "source_ref": s["ref"],
+                        "context": context,
+                        "source_id": s["id"]
+                    })
+                    break
+    
+    semantic_drift = []
+    if embedder and len(occurrences) >= 2:
+        contexts = [o["context"] for o in occurrences]
+        context_embs = embedder.encode(contexts, convert_to_tensor=True)
+        
+        for i in range(len(occurrences) - 1):
+            drift = cosine(
+                context_embs[i].cpu().numpy(),
+                context_embs[i+1].cpu().numpy()
+            )
+            
+            semantic_drift.append({
+                "from_year": occurrences[i]["year"],
+                "to_year": occurrences[i+1]["year"],
+                "drift_score": float(drift),
+                "interpretation": "STABLE" if drift < 0.2 else "SHIFTING" if drift < 0.4 else "RADICAL_CHANGE"
+            })
+    
+    return {
+        "concept": concept,
+        "total_occurrences": len(occurrences),
+        "occurrences": occurrences,
+        "semantic_drift": semantic_drift,
+        "periods_active": list(set([o["year"] for o in occurrences]))
+    }
 
-            const handleMouseDown = (e, nodeId) => {
-                if (e.button !== 0) return;
-                e.preventDefault();
-                const node = activeStrata.find(s => s.id === nodeId);
-                if (!node) return;
-                
-                const rect = e.currentTarget.getBoundingClientRect();
-                setDragOffset({
-                    x: e.clientX - rect.left,
-                    y: e.clientY - rect.top
-                });
-                setDraggedNode(nodeId);
-            };
+def analyze_power_knowledge_nexus(strata: list) -> dict:
+    """Analyserer makt/kunnskaps-neksus"""
+    authority_markers = {
+        "citations": [],
+        "institutional_references": [],
+        "authority_hierarchy": {}
+    }
+    
+    authority_patterns = [
+        (r"(Le Corbusier|Asplund|Wright|Gropius|Mies)", "ARCHITECT"),
+        (r"(Akademiet|Kunstakademiet|universitet|skole)", "INSTITUTION"),
+        (r"(regering|departement|bygningsråd|boligkommission)", "STATE"),
+        (r"(tidsskrift|journal|publikation|artikel)", "PUBLICATION")
+    ]
+    
+    for s in strata:
+        for pattern, auth_type in authority_patterns:
+            matches = re.findall(pattern, s["text"], re.IGNORECASE)
+            for match in matches:
+                authority_markers["citations"].append({
+                    "entity": match if isinstance(match, str) else match[0],
+                    "type": auth_type,
+                    "source_year": s.get("year"),
+                    "source_ref": s["ref"]
+                })
+    
+    type_counts = Counter([s["type"] for s in strata])
+    authority_markers["authority_hierarchy"] = {
+        "PRIMARY": type_counts.get("PRIMARY", 0),
+        "SECONDARY": type_counts.get("SECONDARY", 0),
+        "QUOTES": type_counts.get("QUOTES", 0)
+    }
+    
+    # v10.11: Mer forståelig terminologi
+    primary_count = type_counts.get("PRIMARY", 0)
+    quotes_count = type_counts.get("QUOTES", 0)
+    
+    if primary_count > quotes_count:
+        dominant = "FISKERS EGNE TEKSTER"
+        dominant_explanation = f"Svaret hviler primært på {primary_count} av Fiskers egne tekster"
+    elif quotes_count > primary_count:
+        dominant = "SITATER OG REFERANSER"
+        dominant_explanation = f"Svaret hviler primært på {quotes_count} sitater fra andre kilder"
+    else:
+        dominant = "BLANDET"
+        dominant_explanation = "Svaret kombinerer Fiskers tekster med eksterne referanser"
+    
+    return {
+        "authority_citations": authority_markers["citations"],
+        "hierarchy": authority_markers["authority_hierarchy"],
+        "dominant_discourse": dominant,
+        "dominant_explanation": dominant_explanation,  # NY
+        "total_authority_markers": len(authority_markers["citations"])
+    }
 
-            const handleMouseMove = (e) => {
-                if (!draggedNode) return;
-                const newX = ((e.clientX - dragOffset.x) / viewport.w) * 100;
-                const newY = ((e.clientY - dragOffset.y) / viewport.h) * 100;
-                const clampedX = Math.max(5, Math.min(95, newX));
-                const clampedY = Math.max(5, Math.min(85, newY));
-                
-                setActiveStrata(prev => prev.map(s => 
-                    s.id === draggedNode ? { ...s, pos: { x: clampedX, y: clampedY } } : s
-                ));
-            };
+# --- EPISTEMISK ANALYSE ---
 
-            const handleMouseUp = () => {
-                setDraggedNode(null);
-            };
+def analyze_source_relations(strata: list, response_text: str, query: str) -> dict:
+    """Epistemisk analyse"""
+    if not embedder:
+        return {}
 
-            useEffect(() => {
-                if (draggedNode) {
-                    window.addEventListener('mousemove', handleMouseMove);
-                    window.addEventListener('mouseup', handleMouseUp);
-                    return () => {
-                        window.removeEventListener('mousemove', handleMouseMove);
-                        window.removeEventListener('mouseup', handleMouseUp);
-                    };
-                }
-            }, [draggedNode, dragOffset]);
+    analysis = {
+        "source_attributions": [],
+        "source_comparisons": [],
+        "query_source_relations": [],
+        "response_grounding": {},
+        "epistemic_levels": {}
+    }
 
-            const executeGenealogicalRAG = async (text) => {
-                if (isSynthesizing) return;
-                const prompt = text || documentText;
-                if (!prompt || prompt.trim().length < 3) {
-                    addLog("Spørsmål for kort");
-                    return;
-                }
-                
-                setLastQuery(prompt);
-                setIsSynthesizing(true);
-                addLog(`Aktiverer genealogisk analyse...`);
+    total_attributed = 0
+    for s in strata:
+        attributed = find_attributable_segments(s["text"], response_text, threshold=0.60)
+        if attributed:
+            avg_similarity = sum(seg["similarity"] for seg in attributed) / len(attributed)
+            
+            if avg_similarity > 0.68:
+                level = "ARKIVFAKTA"
+            elif avg_similarity > 0.55:
+                level = "ARKIV-NÆR"
+            else:
+                level = "PRAKSISBASERT"
+            
+            analysis["source_attributions"].append({
+                "source_id": s.get("id", "unknown"),
+                "source_ref": s["ref"],
+                "segments": attributed,
+                "attribution_strength": avg_similarity,
+                "epistemic_level": level,
+                "confidence": "high" if avg_similarity > 0.65 else "medium" if avg_similarity > 0.50 else "low"
+            })
+            total_attributed += len(attributed)
 
-                try {
-                    const response = await fetch('/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: prompt })
-                    });
-                    
-                    if (!response.ok) {
-                        const err = await response.json();
-                        addLog(err.error || "Fejl");
-                        setSyntheticResponse(err.text || "");
-                        return;
-                    }
-                    
-                    const data = await response.json();
-                    
-                    const newStrata = [];
-                    if (data.strata && Array.isArray(data.strata)) {
-                        data.strata.forEach((s, i) => {
-                            newStrata.push({
-                                ...s,
-                                pos: getSmartPosition(s.year, newStrata),
-                                color: s.type === "PRIMARY" ? rams.blue : 
-                                       s.type === "QUOTES" ? rams.orange : rams.red
-                            });
-                        });
-                        setActiveStrata(newStrata);
-                    }
+    if len(strata) >= 2:
+        source_texts = [s["text"] for s in strata]
+        source_embs = embedder.encode(source_texts, convert_to_tensor=True)
+        for i in range(len(strata)):
+            for j in range(i + 1, len(strata)):
+                sim = util.cos_sim(source_embs[i], source_embs[j])[0][0].item()
+                if sim > 0.4:
+                    analysis["source_comparisons"].append({
+                        "source_a": strata[i]["ref"],
+                        "source_b": strata[j]["ref"],
+                        "similarity": float(sim),
+                        "relation_type": "KONVERGENT" if sim > 0.7 else "RESONANT"
+                    })
 
-                    setDetectedVisuals(data.visuals || []);
-                    setVisualNodes([]);
-                    setSyntheticResponse(data.text || "");
-                    setDiscursiveState(data.state || "GENEALOGI");
-                    setIntensity(data.intensity || 0.8);
-                    setGenealogy(data.genealogy || null);
-                    setSelectedSources([]);
-                    addLog(`Genealogi etableret.`);
-                } catch (error) {
-                    addLog(`Fejl: ${error.message}`);
-                } finally {
-                    setIsSynthesizing(false);
-                }
-            };
+    query_emb = embedder.encode(query, convert_to_tensor=True)
+    for s in strata:
+        rel = util.cos_sim(query_emb, embedder.encode(s["text"], convert_to_tensor=True))[0][0].item()
+        analysis["query_source_relations"].append({
+            "source_ref": s["ref"],
+            "query_relevance": float(rel),
+            "relevance_category": "HØY" if rel > 0.6 else "MEDIUM" if rel > 0.4 else "LAV"
+        })
 
-            const handleTryAgain = () => {
-                if (!lastQuery) return;
-                executeGenealogicalRAG(lastQuery);
-            };
+    resp_emb = embedder.encode(response_text, convert_to_tensor=True)
+    comb_emb = embedder.encode(" ".join([s["text"] for s in strata]), convert_to_tensor=True)
+    g_score = util.cos_sim(resp_emb, comb_emb)[0][0].item()
+    
+    analysis["response_grounding"] = {
+        "score": float(g_score),
+        "assessment": "SOLID" if g_score > 0.7 else "MODERAT" if g_score > 0.5 else "SVAK",
+        "warning": None if g_score > 0.5 else "Begrenset kildes støtte"
+    }
+    
+    if analysis["source_attributions"]:
+        avg_attribution = sum(a["attribution_strength"] for a in analysis["source_attributions"]) / len(analysis["source_attributions"])
+        high_conf_count = len([a for a in analysis["source_attributions"] if a["attribution_strength"] > 0.65])
+        
+        if avg_attribution > 0.70 and high_conf_count >= 2:
+            overall_level = "ARKIVFAKTA"
+        elif avg_attribution > 0.58 and high_conf_count >= 1:
+            overall_level = "ARKIV-NÆR TOLKNING"
+        else:
+            overall_level = "PRAKSISBASERT SYNTESE"
+        
+        analysis["epistemic_levels"] = {
+            "primary_level": overall_level,
+            "average_attribution": float(avg_attribution),
+            "high_confidence_sources": high_conf_count,
+            "total_segments_attributed": total_attributed
+        }
+    else:
+        analysis["epistemic_levels"] = {
+            "primary_level": "PRAKSISBASERT SYNTESE",
+            "average_attribution": 0.0,
+            "high_confidence_sources": 0,
+            "total_segments_attributed": 0,
+            "warning": "Ingen direkte kildeattribusjon"
+        }
 
-            const spawnVisual = (visual) => {
-                if (visualNodes.find(v => v.keyword === visual.keyword)) return;
-                const pos = getSmartPosition(1960, visualNodes);
-                const newNode = { ...visual, id: `vis-${Date.now()}`, pos: pos };
-                setVisualNodes(prev => [...prev, newNode]);
-                addLog(`Projiserer: ${visual.keyword}`);
-            };
+    return analysis
 
-            const renderResponseWithVisuals = (text) => {
-                if (!detectedVisuals || !detectedVisuals.length) return text;
-                const patterns = detectedVisuals.map(v => v.keyword).join("|");
-                const regex = new RegExp(`(${patterns})`, "gi");
-                const parts = text.split(regex);
+def perform_full_genealogical_analysis(strata: list, response_text: str, query: str) -> dict:
+    """Kombinert analyse"""
+    print("\n🔬 Utfører genealogisk-epistemisk analyse...")
+    
+    epistemic_analysis = analyze_source_relations(strata, response_text, query)
+    
+    genealogical_analysis = {
+        "discursive_shifts": detect_discursive_shifts(strata),
+        "concept_genealogies": {},
+        "power_knowledge": analyze_power_knowledge_nexus(strata),
+        "temporal_distribution": {},
+        "discontinuities": []
+    }
+    
+    for concept in GENEALOGICAL_CONCEPTS:
+        if any(concept.lower() in s["text"].lower() for s in strata):
+            genealogical_analysis["concept_genealogies"][concept] = trace_concept_genealogy(strata, concept)
+    
+    years = [int(s["year"]) for s in strata if s.get("year")]
+    if years:
+        genealogical_analysis["temporal_distribution"] = {
+            "earliest": min(years),
+            "latest": max(years),
+            "span": max(years) - min(years),
+            "median": int(np.median(years)),
+            "decade_distribution": dict(Counter([y // 10 * 10 for y in years]))
+        }
+    
+    if genealogical_analysis["discursive_shifts"]["shifts"]:
+        major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]
+        genealogical_analysis["discontinuities"] = [{
+            "year": shift["year_to"],
+            "description": f"Major break {shift['year_from']}-{shift['year_to']}",
+            "magnitude": shift["distance"]
+        } for shift in major_shifts]
+    
+    combined = {
+        **epistemic_analysis,
+        **genealogical_analysis
+    }
+    
+    print(f"   ✅ Epistemisk nivå: {epistemic_analysis['epistemic_levels'].get('primary_level', 'N/A')}")
+    print(f"   ✅ {len(genealogical_analysis['concept_genealogies'])} begrepsgeneaologier")
+    print(f"   ✅ {len(genealogical_analysis['discursive_shifts']['shifts'])} skift")
+    
+    return combined
 
-                return parts.map((part, i) => {
-                    const match = detectedVisuals.find(v => v.keyword.toLowerCase() === part.toLowerCase());
-                    if (match) {
-                        const isActive = visualNodes.find(n => n.keyword === match.keyword);
-                        return (
-                            <span 
-                                key={i}
-                                onClick={() => spawnVisual(match)}
-                                className={`cursor-pointer transition-all border-b-2 font-medium mx-0.5 px-1 rounded-sm ${
-                                    isActive 
-                                        ? 'border-blue-500 text-blue-700 bg-blue-50' 
-                                        : 'border-dashed border-gray-400 text-gray-700 hover:border-blue-400 hover:bg-blue-50/50'
-                                }`}
-                                title="Klik for å projisere bilde">
-                                <LucideIcon name="image" size={14} className="inline mr-1 mb-0.5 opacity-50" />
-                                {part}
-                            </span>
-                        );
-                    }
-                    return part;
-                });
-            };
+# --- RAG-LOGIKK ---
 
-            const toggleSource = (source) => {
-                if (draggedNode) return;
-                setSelectedSources(prev => {
-                    const exists = prev.find(s => s.id === source.id);
-                    if (exists) return prev.filter(s => s.id !== source.id);
-                    return [...prev, source];
-                });
-            };
+def _fetch_ns(ns: str, qvec, top_k: int):
+    """Henter matches fra namespace"""
+    try:
+        res = pinecone_index.query(
+            vector=qvec,
+            top_k=top_k,
+            include_metadata=True,
+            namespace=ns
+        )
+        matches = res.get("matches", []) or []
+        for m in matches:
+            m["metadata"]["__ns"] = ns
+        return matches
+    except Exception as e:
+        print(f"⚠️ Feil i namespace '{ns}': {e}")
+        return []
 
-            const closeSidebar = (e) => {
-                if (e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                }
-                setSelectedSources([]);
-                setHoveredSource(null);
-            };
+def pinecone_search_logic(user_prompt: str, total_results: int = 8):
+    """
+    RAG-søk med PRIMARY-first strategi v10.10
+    """
+    if not (pinecone_index and embedder):
+        print("⚠️ Pinecone eller embedder ikke tilgjengelig")
+        return []
+    
+    print(f"\n🔍 Analyserer: '{user_prompt}'")
+    enhanced = enhance_query(user_prompt)
+    print(f"   ↳ Ekspandert til: '{enhanced}'")
+    qvec = embedder.encode(enhanced).tolist()
+    
+    # Hent fra alle namespaces
+    ns_quotas = {"primary": 10, "secondary": 4, "quotes": 3}
+    pool = defaultdict(list)
+    
+    for ns, quota in ns_quotas.items():
+        pool[ns] = _fetch_ns(ns, qvec, top_k=quota)
+        print(f"   ↳ {ns}: {len(pool[ns])} matches")
 
-            const getHighlightedText = (fullText, response, sourceRef) => {
-                if (!response || !fullText) return null;
-                
-                let attributedSegments = [];
-                if (genealogy && genealogy.source_attributions) {
-                    const attr = genealogy.source_attributions.find(a => a.source_ref === sourceRef);
-                    if (attr && attr.segments) {
-                        attributedSegments = attr.segments.map(s => ({
-                            text: s.text,
-                            similarity: s.similarity
-                        }));
-                    }
-                }
+    # Clean OCR
+    cleaned_pool = defaultdict(list)
+    for ns, matches in pool.items():
+        for m in matches:
+            md = m.get("metadata") or {}
+            txt = md.get("text") or ""
+            txt = normalize_orthography(txt)
+            txt = fix_common_ocr_errors(txt)
+            txt = clean_text(txt)
+            if len(txt.split()) > 8:
+                md["text"] = txt
+                cleaned_pool[ns].append(m)
 
-                // Hvis INGEN attributions - blur alt
-                if (attributedSegments.length === 0) {
-                    return (
-                        <div className="text-[13px] text-stone-400 leading-relaxed blur-[3px] select-none pointer-events-none user-select-none">
-                            {fullText}
-                        </div>
-                    );
-                }
+    # Rerank
+    if reranker:
+        print("   🔄 Reranking...")
+        for ns in cleaned_pool:
+            if not cleaned_pool[ns]:
+                continue
+            pairs = [(user_prompt, m["metadata"]["text"]) for m in cleaned_pool[ns]]
+            scores = reranker.predict(pairs)
+            cleaned_pool[ns] = [x for _, x in sorted(zip(scores, cleaned_pool[ns]), key=lambda z: z[0], reverse=True)]
 
-                // Split text into sentences
-                const sentences = fullText.split(/([.!?]+\s+)/).filter(Boolean);
-                let fullSentences = [];
-                for (let i = 0; i < sentences.length; i += 2) {
-                    fullSentences.push((sentences[i] + (sentences[i+1] || "")).trim());
-                }
+    # PRIMARY-FIRST SELECTION
+    final_selection = []
+    
+    # Start med 3 PRIMARY
+    for _ in range(3):
+        if cleaned_pool["primary"]:
+            final_selection.append(cleaned_pool["primary"].pop(0))
+    
+    # Så 1 SECONDARY (kontekst)
+    if cleaned_pool["secondary"]:
+        final_selection.append(cleaned_pool["secondary"].pop(0))
+    
+    # Så 1 QUOTES (hvis tilgjengelig)
+    if cleaned_pool["quotes"]:
+        final_selection.append(cleaned_pool["quotes"].pop(0))
+    
+    # Fylle opp resten: PRIMARY først
+    remaining = []
+    remaining.extend(cleaned_pool["primary"])
+    remaining.extend(cleaned_pool["secondary"])
+    remaining.extend(cleaned_pool["quotes"])
+    
+    if reranker and remaining:
+        pairs = [(user_prompt, m["metadata"]["text"]) for m in remaining]
+        scores = reranker.predict(pairs)
+        remaining = [x for _, x in sorted(zip(scores, remaining), key=lambda z: z[0], reverse=True)]
+    
+    while len(final_selection) < total_results and remaining:
+        candidate = remaining.pop(0)
+        if candidate not in final_selection:
+            final_selection.append(candidate)
+    
+    print(f"   ✅ Returnerer {len(final_selection)} kilder (PRIMARY-first)")
+    
+    for i, m in enumerate(final_selection):
+        md = m["metadata"]
+        title = md.get('title', md.get('__ns', '?').upper())
+        year = md.get('year', '?')
+        print(f"      [{i+1}] {title} ({year}) | {md.get('text', '')[:50]}...")
+    
+    return final_selection
 
-                // Check hver setning om den matcher et attributed segment
-                return (
-                    <div className="text-[13px] leading-relaxed">
-                        {fullSentences.map((sentence, i) => {
-                            // Sjekk om denne setningen inneholder noe av et attributed segment
-                            const matchingSegment = attributedSegments.find(seg => 
-                                sentence.includes(seg.text) || 
-                                seg.text.includes(sentence) ||
-                                (sentence.length > 20 && seg.text.length > 20 && 
-                                 levenshteinSimilarity(sentence, seg.text) > 0.6)
-                            );
+# --- API ENDEPUNKT ---
 
-                            if (matchingSegment) {
-                                // LESELIG - brukt i responsen
-                                const isDirect = matchingSegment.similarity > 0.65;
-                                return (
-                                    <span key={i} className={`${
-                                        isDirect 
-                                            ? 'bg-sky-100 text-stone-900 font-medium border-b-2 border-sky-400' 
-                                            : 'bg-stone-50 text-stone-800 border-b border-stone-300'
-                                    } px-1 mr-1`}>
-                                        {sentence}
-                                    </span>
-                                );
-                            } else {
-                                // BLURRED - ikke brukt
-                                return (
-                                    <span key={i} className="text-stone-400 blur-[3px] select-none pointer-events-none user-select-none mr-1">
-                                        {sentence}
-                                    </span>
-                                );
-                            }
-                        })}
-                    </div>
-                );
-            };
+@app.post("/chat")
+async def api_chat(req: Request):
+    data = await req.json()
+    user_prompt = data.get("message", "")
+    
+    if len(user_prompt.strip()) < 3:
+        return JSONResponse({"error": "Spørsmål for kort"}, 400)
+    
+    matches = pinecone_search_logic(user_prompt, total_results=8)
+    
+    if not matches:
+        return JSONResponse({
+            "error": "Ingen kilder funnet",
+            "text": "Beklager, jeg kan ikke svare uten arkivet.",
+            "strata": [],
+            "visuals": [],
+            "state": "FRAKOBLET",
+            "intensity": 0.0,
+            "genealogy": {},
+            "version": "v10.11"
+        }, 200)
+    
+    # =====================================================
+    # v10.11 SYSTEM PROMPT - FISKERS AUTENTISKE STEMME
+    # Kombinerer kildetrohet med personlig stemme
+    # =====================================================
+    system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiet.
 
-            // Helper: Simple Levenshtein similarity for fuzzy matching
-            const levenshteinSimilarity = (s1, s2) => {
-                const longer = s1.length > s2.length ? s1 : s2;
-                const shorter = s1.length > s2.length ? s2 : s1;
-                if (longer.length === 0) return 1.0;
-                
-                const editDistance = (s1, s2) => {
-                    s1 = s1.toLowerCase();
-                    s2 = s2.toLowerCase();
-                    const costs = [];
-                    for (let i = 0; i <= s1.length; i++) {
-                        let lastValue = i;
-                        for (let j = 0; j <= s2.length; j++) {
-                            if (i === 0) costs[j] = j;
-                            else if (j > 0) {
-                                let newValue = costs[j - 1];
-                                if (s1.charAt(i - 1) !== s2.charAt(j - 1))
-                                    newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
-                                costs[j - 1] = lastValue;
-                                lastValue = newValue;
-                            }
-                        }
-                        if (i > 0) costs[s2.length] = lastValue;
-                    }
-                    return costs[s2.length];
-                };
-                
-                return (longer.length - editDistance(longer, shorter)) / longer.length;
-            };
+DIN STEMME OG STIL:
+Du taler som i dine forelæsninger og artikler - præcis, faglig, men med personlige vurderinger:
+- "det fineste exempel jeg har kunnet finde"
+- "det har moret mig at medtage her"
+- "forekommer mig at være et af de smukkeste og mest afklarede exempler"
 
-            const handleSubmit = () => executeGenealogicalRAG(documentText);
-            const handleKeyPress = (e) => { 
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit();
-            };
+SÅDAN SVARER DU:
+1. BRUG KONKRETE REFERENCER fra kilderne: navne, årstal, bygninger, priser, mål
+2. GIV PERSONLIGE VURDERINGER: "jeg finder", "forekommer mig", "efter min mening"
+3. SAMMENLIGN OG KONTEKSTUALISÉR: sæt ting i historisk perspektiv
+4. VÆR PRÆCIS MEN IKKE TØR: brug tekniske detaljer naturligt
 
-            const resetAll = () => {
-                setDocumentText("");
-                setLastQuery("");
-                setSyntheticResponse("");
-                setActiveStrata([]);
-                setVisualNodes([]);
-                setDetectedVisuals([]);
-                setGenealogy(null);
-                setSelectedSources([]);
-                setSelectedConcept(null);
-                setHoveredSource(null);
-            };
+FORBUDT:
+❌ Generiske udsagn uden konkrete referencer
+❌ At opfinde fakta der ikke findes i kilderne
+❌ At tale OM dig selv i 3. person ("Fisker mente...")
 
-            // FYSIKK-MOTOR: Magnet-effekt / Repulsion
-            useEffect(() => {
-                const simulationLoop = setInterval(() => {
-                    setActiveStrata(currentNodes => {
-                        if (currentNodes.length < 2) return currentNodes;
+EKSEMPEL PÅ GOD FISKER-STEMME:
+"Bakkehusene fra 1922 var en værdifuld indsats af Bentsen og Henningsen, selvom
+boligselskabet dengang mødte stor modstand - man ville ikke bo i 'barakker', som 
+det hed sig. Men naar man tyve aar efter vandrer mellem de frodige haver, virker 
+det liv der leves i disse huse som det bedste bevis for typens rigtighed."
 
-                        let hasMovement = false;
-                        
-                        const nextNodes = currentNodes.map(n => ({
-                            ...n, 
-                            pos: { ...n.pos },
-                            velocity: { x: 0, y: 0 }
-                        }));
+Svar på dansk. 4-6 sætninger. Vær konkret, personlig og faglig."""
+    
+    temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
+    if temporal_context:
+        system_prompt += f"\n\nTidsperiode:\n{temporal_context}"
+    
+    # =====================================================
+    # v10.10: KILDE-FORMAT MED TITTEL-PREFIX
+    # Inspirert av Gemini: [Fra 'titel', år]
+    # =====================================================
+    source_lines = []
+    for i, m in enumerate(matches, 1):
+        text = m["metadata"].get("text", "")[:600]  # Mer kontekst
+        source_type = m["metadata"].get("__ns", "primary").upper()
+        year = m["metadata"].get("year", "?")
+        title = m["metadata"].get("title", "Arkiv")
+        author = m["metadata"].get("author", "Kay Fisker")
+        
+        # Gemini-stil prefix som hjelper modellen forstå kontekst
+        source_lines.append(f"[KILDE {i} - Fra '{title}', {year}]:\n{text}")
+    
+    context = "\n\n".join(source_lines)
+    
+    full_prompt = f"""System: {system_prompt}
 
-                        const REPULSION_DIST = 32; // Større "magnetfelt"
-                        const REPULSION_STRENGTH = 0.4; // ENDA KRAFTIGERE (var 0.25)
-                        const FORBIDDEN_REPULSION = 0.8; // Sterkere dytt fra chatboks
-                        const EDGE_REPULSION = 0.5; // STERKERE dytt fra kanter
-                        
-                        // Chatboks område - MER PRESIST
-                        const chatBoxZone = { 
-                            xMin: 18, xMax: 82,
-                            yMin: 65, yMax: 100  // Justert til 65
-                        };
-                        
-                        for (let i = 0; i < nextNodes.length; i++) {
-                            const nodeA = nextNodes[i];
-                            
-                            // Dragged node skal ikke påvirkes
-                            if (nodeA.id === draggedNode) continue;
+### KILDEMATERIALE ###
+{context}
+### SLUT PÅ KILDER ###
 
-                            // KRAFTIG REPULSION FRA CHATBOKS
-                            if (nodeA.pos.y > chatBoxZone.yMin - 5 && 
-                                nodeA.pos.x > chatBoxZone.xMin && 
-                                nodeA.pos.x < chatBoxZone.xMax) {
-                                const sideForce = (nodeA.pos.x > 50 ? 1 : -1) * 0.2;
-                                
-                                nodeA.pos.y -= FORBIDDEN_REPULSION;
-                                nodeA.pos.x += sideForce;
-                                hasMovement = true;
-                            }
+Spørgsmål: {user_prompt}
 
-                            // SOFT REPULSION FRA KANTER - ikke hard boundaries
-                            const MARGIN = 5;
-                            if (nodeA.pos.x < MARGIN) {
-                                nodeA.pos.x += EDGE_REPULSION * (MARGIN - nodeA.pos.x);
-                                hasMovement = true;
-                            }
-                            if (nodeA.pos.x > 100 - MARGIN) {
-                                nodeA.pos.x -= EDGE_REPULSION * (nodeA.pos.x - (100 - MARGIN));
-                                hasMovement = true;
-                            }
-                            if (nodeA.pos.y < MARGIN) {
-                                nodeA.pos.y += EDGE_REPULSION * (MARGIN - nodeA.pos.y);
-                                hasMovement = true;
-                            }
-                            if (nodeA.pos.y > 72 - MARGIN) { // Økt til 72
-                                nodeA.pos.y -= EDGE_REPULSION * (nodeA.pos.y - (72 - MARGIN));
-                                hasMovement = true;
-                            }
+Kay Fisker:"""
+    
+    # =====================================================
+    # =====================================================
+    # v10.10 PARAMETERE - balansert for syntese uten hallusinering
+    # =====================================================
+    result = pipe(
+        full_prompt,
+        max_new_tokens=400,          # OPP fra 300 - unngår avkutting
+        temperature=0.40,            # NED litt fra 0.45 - mindre hallusinering
+        top_p=0.88,                  
+        top_k=45,                    
+        repetition_penalty=1.25,     # NED litt fra 1.30
+        do_sample=True
+    )
+    
+    generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
+    generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK).*", "", generated_text, flags=re.MULTILINE).strip()
+    generated_text = re.sub(r"\n+", " ", generated_text).strip()
+    
+    # Bygg strata med FULL metadata for frontend
+    strata = []
+    for i, m in enumerate(matches):
+        full_text = m["metadata"].get("text", "")
+        
+        excerpt_info = await run_in_threadpool(
+            extract_most_relevant_excerpt, 
+            full_text, 
+            generated_text, 
+            25, 
+            85
+        )
+        
+        # v10.11: Mer metadata for Arbejdsbord
+        strata.append({
+            "id": f"source_{i}",
+            "text": full_text,
+            "excerpt": excerpt_info["excerpt"],
+            "excerpt_relevance": excerpt_info["relevance"],
+            "excerpt_explanation": excerpt_info["explanation"],
+            "ref": f"{m['metadata'].get('author', 'Kay Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
+            "year": m["metadata"].get("year"),
+            "type": m["metadata"].get("__ns", "primary").upper(),
+            "score": m.get("score", 0.0),
+            # NY METADATA for frontend
+            "title": m["metadata"].get("title", "Ukjent kilde"),
+            "author": m["metadata"].get("author", "Kay Fisker"),
+            "source_type": m["metadata"].get("source_type", "arkiv"),
+            "publication": m["metadata"].get("publication", None),
+            "page": m["metadata"].get("page", None),
+        })
 
-                            // REPULSION FRA ANDRE NODER
-                            for (let j = 0; j < nextNodes.length; j++) {
-                                if (i === j) continue;
-                                const nodeB = nextNodes[j];
+    genealogy = await run_in_threadpool(
+        perform_full_genealogical_analysis, 
+        strata, 
+        generated_text, 
+        user_prompt
+    )
+    
+    visuals = extract_visuals(generated_text)
+    
+    epistemic_level = genealogy.get("epistemic_levels", {}).get("primary_level", "FRIKSJON")
+    has_major_shifts = len([s for s in genealogy.get("discursive_shifts", {}).get("shifts", []) if s.get("type") == "MAJOR_SHIFT"]) > 0
+    
+    if visuals:
+        state = "VISUEL_AKKUMULERING"
+    elif has_major_shifts:
+        state = "DISKURSIVT_BRUDD"
+    elif epistemic_level == "ARKIVFAKTA":
+        state = "ARKIV-DIREKTE"
+    elif epistemic_level == "ARKIV-NÆR TOLKNING":
+        state = "TOLKNING"
+    else:
+        state = "SYNTESE"
+    
+    return {
+        "text": generated_text,
+        "strata": strata,
+        "visuals": visuals,
+        "state": state,
+        "intensity": min(len(strata)/8, 1.0),
+        "genealogy": genealogy,
+        "version": "v10.11",
+        "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
+    }
 
-                                const dx = (nodeA.pos.x - nodeB.pos.x) * 1.6; 
-                                const dy = nodeA.pos.y - nodeB.pos.y;
-                                const distance = Math.sqrt(dx * dx + dy * dy);
+@app.get("/tts")
+async def get_tts(text: str):
+    if tts is None:
+        return JSONResponse({"error": "TTS utilgjengelig"}, 500)
+    out = tts(text)
+    sf.write("static/tts_output.wav", out["audio"], out["sampling_rate"])
+    return FileResponse("static/tts_output.wav", media_type="audio/wav")
 
-                                if (distance > 0 && distance < REPULSION_DIST) {
-                                    const force = (REPULSION_DIST - distance) / REPULSION_DIST;
-                                    const pushX = (dx / distance) * force * REPULSION_STRENGTH;
-                                    const pushY = (dy / distance) * force * REPULSION_STRENGTH;
+@app.get("/", response_class=HTMLResponse)
+async def root_view():
+    try:
+        with open("static/index.html", "r") as f:
+            return HTMLResponse(content=f.read())
+    except:
+        return HTMLResponse(content="<h1>static/index.html ikke funnet</h1>")
 
-                                    nodeA.pos.x += pushX;
-                                    nodeA.pos.y += pushY;
-                                    
-                                    hasMovement = true;
-                                }
-                            }
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-                            // HARD BOUNDARY CONSTRAINTS (kun som fallback)
-                            if (nodeA.pos.x < 2) nodeA.pos.x = 2;
-                            if (nodeA.pos.x > 98) nodeA.pos.x = 98;
-                            if (nodeA.pos.y < 2) nodeA.pos.y = 2;
-                            if (nodeA.pos.y > 72) nodeA.pos.y = 72; // Økt til 72
-                        }
-
-                        return hasMovement ? nextNodes : currentNodes;
-                    });
-                }, 25); // Enda raskere - ~40 fps
-
-                return () => clearInterval(simulationLoop);
-            }, [draggedNode, activeStrata.length]);
-
-            const renderDiscursiveShifts = () => {
-                if (!genealogy?.discursive_shifts?.shifts) return null;
-                return genealogy.discursive_shifts.shifts.map((shift, i) => {
-                    const sourceA = activeStrata.find(s => s.ref === shift.source_a);
-                    const sourceB = activeStrata.find(s => s.ref === shift.source_b);
-                    if (!sourceA || !sourceB) return null;
-                    
-                    const isMajor = shift.type === "MAJOR_SHIFT";
-                    const strokeColor = isMajor ? "#44403c" : "#78716c"; // stone-700 : stone-500
-                    const strokeWidth = isMajor ? 3 : 2;
-                    
-                    const midX = (sourceA.pos.x + sourceB.pos.x) / 2;
-                    const midY = (sourceA.pos.y + sourceB.pos.y) / 2;
-                    
-                    return (
-                        <g key={`shift-${i}`}>
-                            {/* Hovedlinje */}
-                            <line 
-                                x1={`${sourceA.pos.x}%`} y1={`${sourceA.pos.y}%`}
-                                x2={`${sourceB.pos.x}%`} y2={`${sourceB.pos.y}%`}
-                                stroke={strokeColor} strokeWidth={strokeWidth}
-                                strokeDasharray={isMajor ? "10,5" : "6,3"} 
-                                opacity="0.7"
-                                className={isMajor ? "animate-pulse" : ""}
-                            />
-                            {/* Midtpunkt markør */}
-                            <circle 
-                                cx={`${midX}%`} cy={`${midY}%`} r="4"
-                                fill={strokeColor} opacity="0.8"
-                            />
-                            {/* Label */}
-                            <text 
-                                x={`${midX}%`} y={`${midY - 1}%`}
-                                className="text-[9px] fill-white font-mono font-black"
-                                textAnchor="middle"
-                                style={{ paintOrder: 'stroke', stroke: strokeColor, strokeWidth: 3 }}>
-                                {isMajor ? 'BRUDD' : 'skift'}
-                            </text>
-                        </g>
-                    );
-                });
-            };
-
-            const renderConceptConnections = () => {
-                if (!selectedConcept || !genealogy?.concept_genealogies?.[selectedConcept]) return null;
-                const conceptData = genealogy.concept_genealogies[selectedConcept];
-                const sourceIds = conceptData.occurrences.map(o => o.source_id);
-                const connectedNodes = activeStrata.filter(s => sourceIds.includes(s.id));
-                
-                return connectedNodes.map((node, i) => {
-                    if (i === 0) return null;
-                    const prev = connectedNodes[i - 1];
-                    
-                    const midX = (prev.pos.x + node.pos.x) / 2;
-                    const midY = (prev.pos.y + node.pos.y) / 2;
-                    
-                    return (
-                        <g key={`concept-${i}`}>
-                            {/* Hoved-linje */}
-                            <line 
-                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
-                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="1.5"
-                                strokeDasharray="6,4" opacity="0.4"
-                            />
-                            {/* Animert puls som beveger seg langs linjen */}
-                            <line 
-                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
-                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="3"
-                                strokeDasharray="20,200" 
-                                opacity="0.6"
-                                style={{ 
-                                    filter: 'blur(2px)',
-                                    animation: `dash-flow-${i} 3s linear infinite`
-                                }}
-                            />
-                            <style>{`
-                                @keyframes dash-flow-${i} {
-                                    0% { stroke-dashoffset: 220; opacity: 0; }
-                                    10% { opacity: 0.8; }
-                                    90% { opacity: 0.8; }
-                                    100% { stroke-dashoffset: 0; opacity: 0; }
-                                }
-                            `}</style>
-                            {/* Subtil glow - veldig nedtonet */}
-                            <line 
-                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
-                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="6"
-                                opacity="0.04"
-                                style={{ filter: 'blur(4px)' }}
-                            />
-                            {/* Tidslinje-indikator */}
-                            <circle 
-                                cx={`${midX}%`} cy={`${midY}%`} r="2.5"
-                                fill="#0ea5e9" opacity="0.6"
-                            />
-                        </g>
-                    );
-                });
-            };
-
-            return (
-                <div className="h-screen w-screen flex flex-col relative bg-[#f2f2f2] font-sans overflow-hidden">
-                    <style>{`
-                        body { font-family: 'Inter', sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
-                        .serif { font-family: 'Libre Baskerville', serif; }
-                        .mono { font-family: 'IBM Plex Mono', monospace; }
-                        
-                        /* Prevent copying of blurred text */
-                        .select-none { 
-                            user-select: none !important; 
-                            -webkit-user-select: none !important;
-                            -moz-user-select: none !important;
-                            -ms-user-select: none !important;
-                        }
-                        .pointer-events-none {
-                            pointer-events: none !important;
-                        }
-                        .user-select-none::selection {
-                            background: transparent !important;
-                            color: inherit !important;
-                        }
-                        
-                        @keyframes glow-pulse { 0% { opacity: 0.08; transform: scale(1); } 50% { opacity: 0.15; transform: scale(1.05); } 100% { opacity: 0.08; transform: scale(1); } }
-                        .animate-glow { animation: glow-pulse 15s ease-in-out infinite; }
-                        
-                        @keyframes breathe { 0% { opacity: 0; transform: scale(0.9); } 50% { opacity: 0.3; transform: scale(1.05); } 100% { opacity: 0; transform: scale(1.2); } }
-                        .animate-breathe { animation: breathe 5s ease-in-out infinite; }
-                        
-                        .glass-membrane { background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05)); backdrop-filter: blur(50px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.3); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.1); }
-                        
-                        .source-node { transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1); cursor: move; }
-                        .source-node:hover { scale: 1.01; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.15); width: 340px !important; }
-                        .source-node.active { border: 2px solid black; box-shadow: 0 20px 60px rgba(0,0,0,0.15); z-index: 50; width: 400px !important; background: rgba(255, 255, 255, 0.95); }
-                        .source-node.dragging { opacity: 0.7; cursor: grabbing; z-index: 200; }
-                        
-                        .visual-node { border-radius: 4px; overflow: hidden; border: 4px solid white; box-shadow: 0 10px 30px rgba(0,0,0,0.15); opacity: 0; animation: pop-in 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; animation-delay: 1.2s; }
-                        @keyframes pop-in { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
-                        
-                        .visual-line { stroke-dasharray: 1000; stroke-dashoffset: 1000; animation: draw-line 1.5s ease-out forwards; }
-                        @keyframes draw-line { to { stroke-dashoffset: 0; } }
-                        
-                        /* Organisk notater-stil */
-                        .genealogy-note {
-                            background: linear-gradient(to bottom, #fffef8 0%, #fefcf3 100%);
-                            border-left: 3px solid #d6d3d1;
-                            box-shadow: 2px 2px 8px rgba(0,0,0,0.08);
-                        }
-                        
-                        .handwritten-marker {
-                            position: relative;
-                            display: inline-block;
-                        }
-                        .handwritten-marker::after {
-                            content: '';
-                            position: absolute;
-                            left: 0;
-                            bottom: 2px;
-                            width: 100%;
-                            height: 2px;
-                            background: currentColor;
-                            opacity: 0.3;
-                            transform: scaleX(1.05) rotate(-0.5deg);
-                        }
-                    `}</style>
-
-                    <header className="h-12 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/20 backdrop-blur-md">
-                        <div className="flex items-center gap-6">
-                            <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 bg-[#e32219] flex items-center justify-center text-white font-black text-[10px]">F</div>
-                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.4</h1>
-                            </div>
-                            <span className={`text-[10px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-blue-500 animate-pulse' : 'text-gray-400'}`}>{discursiveState}</span>
-                            
-                            {genealogy?.epistemic_levels && (
-                                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-100/80">
-                                    <span className={`text-[9px] mono font-medium tracking-wide ${
-                                        genealogy.epistemic_levels.primary_level === 'ARKIVFAKTA' ? 'text-emerald-700' :
-                                        genealogy.epistemic_levels.primary_level === 'ARKIV-NÆR TOLKNING' ? 'text-sky-700' :
-                                        'text-amber-700'
-                                    }`}>
-                                        {genealogy.epistemic_levels.primary_level}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                        
-                        <div className="flex items-center gap-4">
-                            <button 
-                                onClick={() => setShowGenealogy(!showGenealogy)}
-                                className={`px-3 py-1.5 rounded-full text-[9px] mono font-medium tracking-wide transition-all ${
-                                    showGenealogy ? 'bg-stone-700 text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-                                }`}>
-                                Genealogi
-                            </button>
-                            
-                            {genealogy?.discursive_shifts && (
-                                <span className="text-[9px] mono text-stone-500">
-                                    {genealogy.discursive_shifts.shifts.length} brudd
-                                </span>
-                            )}
-                        </div>
-                    </header>
-
-                    <main className={`flex-grow relative z-10 transition-all duration-500 ${selectedSources.length > 0 || showGenealogy ? 'mr-[520px]' : 'mr-0'}`} style={{ marginTop: '48px' }}>
-                        
-                        {isSynthesizing && (
-                            <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
-                                <div className="w-[50vh] h-[50vh] rounded-full blur-[100px] bg-gradient-to-tr from-blue-400 to-cyan-200 opacity-20 animate-breathe"></div>
-                            </div>
-                        )}
-
-                        <div className="absolute inset-0 z-0 pointer-events-none">
-                            {activeStrata.map((s, i) => ( 
-                                <div key={`glow-${i}`} className="absolute rounded-full animate-glow blur-[80px]" 
-                                    style={{ 
-                                        left: `${s.pos.x}%`, top: `${s.pos.y}%`, 
-                                        width: '40%', height: '40%', 
-                                        background: `radial-gradient(circle, ${s.color} 0%, transparent 80%)`, 
-                                        transform: 'translate(-50%, -50%)', 
-                                        animationDelay: `${i * 2}s`, 
-                                        opacity: 0.3 
-                                    }} 
-                                /> 
-                            ))}
-                        </div>
-
-                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-5" 
-                            style={{ filter: showGenealogy ? 'none' : 'blur(2px) opacity(0.3)' }}>
-                            {/* GENEALOGISKE LINJER - Alltid bak alt annet */}
-                            {renderDiscursiveShifts()}
-                            {renderConceptConnections()}
-                        </svg>
-
-                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                            {visualNodes.map((v, i) => ( 
-                                <path key={`vis-link-${i}`} 
-                                    d={`M ${viewport.w / 2} ${viewport.h - 140} Q ${v.pos.x * viewport.w / 100} ${viewport.h - 50} ${v.pos.x * viewport.w / 100} ${v.pos.y * viewport.h / 100}`}
-                                    stroke="#3b82f6" strokeWidth="1.5" fill="none" 
-                                    className="visual-line opacity-50" 
-                                /> 
-                            ))}
-                            
-                            {selectedSources.length > 1 && selectedSources.map((s, i) => {
-                                const next = selectedSources[i + 1];
-                                if (!next) return null;
-                                return <line key={`link-${i}`} x1={`${s.pos.x}%`} y1={`${s.pos.y}%`} x2={`${next.pos.x}%`} y2={`${next.pos.y}%`} stroke="#0ea5e9" strokeWidth="2" opacity="0.5" />;
-                            })}
-
-                            {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSources.find(ss => ss.id === s.id)) && ( 
-                                <path key={`path-${i}`} 
-                                    d={`M ${viewport.w / 2} ${viewport.h - 140} C ${viewport.w / 2} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${viewport.h / 2}, ${s.pos.x * viewport.w / 100} ${s.pos.y * viewport.h / 100}`} 
-                                    stroke={s.color} strokeWidth="1" fill="none" 
-                                    strokeDasharray="4,2" className="animate-in fade-in duration-700 opacity-40" 
-                                /> 
-                            ))}
-                        </svg>
-
-                        <div className="absolute inset-0 z-20 pointer-events-none">
-                            {activeStrata.map((s, i) => {
-                                const isSelected = selectedSources.find(ss => ss.id === s.id);
-                                const isDragging = draggedNode === s.id;
-                                
-                                // Sjekk om noden er del av genealogien
-                                const isInGenealogy = showGenealogy && (
-                                    genealogy?.discursive_shifts?.shifts?.some(shift => 
-                                        shift.source_a === s.ref || shift.source_b === s.ref
-                                    ) ||
-                                    (selectedConcept && genealogy?.concept_genealogies?.[selectedConcept]?.occurrences?.some(
-                                        occ => occ.source_id === s.id
-                                    ))
-                                );
-                                
-                                const isDimmed = (selectedSources.length > 0 && !isSelected) || (showGenealogy && !isInGenealogy && !isSelected);
-                                const attribution = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
-                                const hasAttribution = attribution && attribution.segments && attribution.segments.length > 0;
-                                
-                                const displayText = s.excerpt || s.text;
-                                const textLength = isSelected ? 900 : (hoveredSource === s.id ? 250 : 110);
-
-                                return (
-                                    <div key={s.id} 
-                                        onMouseDown={(e) => handleMouseDown(e, s.id)}
-                                        onClick={() => toggleSource(s)}
-                                        onMouseEnter={() => setHoveredSource(s.id)}
-                                        onMouseLeave={() => setHoveredSource(null)}
-                                        className={`source-node absolute p-6 w-[290px] pointer-events-auto bg-white/40 backdrop-blur-xl border-l-4 border border-white/30 ${
-                                            isDragging ? 'dragging' : ''
-                                        } ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected || isInGenealogy ? 'active' : 'shadow-sm'}`} 
-                                        style={{ 
-                                            left: `${s.pos.x}%`, top: `${s.pos.y}%`, 
-                                            transform: 'translate(-50%, -50%)', 
-                                            borderColor: (hoveredSource === s.id || isSelected || isInGenealogy) ? s.color : 'rgba(0,0,0,0.05)',
-                                            cursor: isDragging ? 'grabbing' : 'move',
-                                            boxShadow: isInGenealogy && !isSelected ? '0 8px 25px rgba(14, 165, 233, 0.3)' : undefined
-                                        }}>
-                                        <div className="flex justify-between items-center mb-3">
-                                            <span className="text-[10px] mono font-medium uppercase tracking-wider" style={{ color: s.color }}>
-                                                {s.type}
-                                            </span>
-                                            <div className="flex items-center gap-2">
-                                                {hasAttribution && <div className="w-2 h-2 rounded-full bg-sky-500" title="Brukt i svar"></div>}
-                                                {isSelected && <LucideIcon name="check-circle" size={14} className="text-green-600" />}
-                                                <span className="text-[10px] mono text-gray-400">#{s.year || '?'}</span>
-                                            </div>
-                                        </div>
-                                        <p className={`serif italic transition-all duration-500 leading-relaxed ${
-                                            hoveredSource === s.id || isSelected ? 'text-[15px] text-black' : 'text-[13px] text-gray-600'
-                                        }`}>
-                                            "{displayText.substring(0, textLength)}{displayText.length > textLength ? '...' : ''}"
-                                        </p>
-                                        {s.excerpt_relevance && s.excerpt_relevance > 0.5 && !isSelected && (
-                                            <div className="mt-3 text-[9px] mono text-sky-600 opacity-60" title={s.excerpt_explanation}>
-                                                ↗ {Math.round(s.excerpt_relevance * 100)}%
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        <div className="absolute inset-0 z-30 pointer-events-none">
-                            {visualNodes.map((v) => (
-                                <div key={v.id} 
-                                    onClick={() => setExpandedVisual(v)} 
-                                    className="visual-node absolute w-40 h-32 pointer-events-auto cursor-zoom-in hover:scale-110 transition-all duration-500 bg-white" 
-                                    style={{ left: `${v.pos.x}%`, top: `${v.pos.y}%` }}>
-                                    <img src={v.url} className="w-full h-full object-cover" alt={v.keyword} />
-                                    <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] p-1.5 mono backdrop-blur-sm">{v.keyword}</div>
-                                </div>
-                            ))}
-                        </div>
-                    </main>
-
-                    {expandedVisual && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/80 backdrop-blur-md animate-in fade-in duration-300" 
-                            onClick={() => setExpandedVisual(null)}>
-                            <div className="relative max-w-4xl max-h-[80vh] bg-white p-2 shadow-2xl rounded-sm border border-gray-200">
-                                <img src={expandedVisual.url} className="max-h-[75vh] w-auto object-contain" alt={expandedVisual.keyword} />
-                                <div className="absolute -bottom-10 left-0 text-black">
-                                    <h3 className="text-xl serif italic">{expandedVisual.keyword}</h3>
-                                    <p className="text-[10px] mono text-gray-500">Arkivmateriale // {expandedVisual.type}</p>
-                                </div>
-                                <button className="absolute -top-12 right-0 text-black hover:text-red-500 text-[10px] uppercase font-bold tracking-widest flex items-center gap-2">
-                                    LUK <LucideIcon name="x" size={16} />
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ORGANISK GENEALOGY SIDEBAR */}
-                    {(selectedSources.length > 0 || showGenealogy) && (
-                        <aside className="fixed right-0 top-12 bottom-0 w-[520px] bg-white/70 backdrop-blur-xl border-l border-white/40 z-40 overflow-y-auto flex flex-col shadow-2xl">
-                            <header className="p-6 border-b border-white/40 sticky top-0 z-10 backdrop-blur-xl bg-white/80">
-                                <div className="flex justify-between items-center mb-3">
-                                    <div>
-                                        <h2 className="text-[13px] font-bold text-stone-800 mb-1">
-                                            {showGenealogy ? "Genealogisk Analyse" : "Arbejdsbord"}
-                                        </h2>
-                                        {selectedSources.length > 0 && (
-                                            <p className="text-[10px] mono text-stone-500">
-                                                {selectedSources.length} kilder valgt
-                                            </p>
-                                        )}
-                                    </div>
-                                    <button onClick={() => { closeSidebar(); setShowGenealogy(false); }} 
-                                        className="w-9 h-9 rounded-full hover:bg-stone-200 flex items-center justify-center">
-                                        <LucideIcon name="x" size={17} />
-                                    </button>
-                                </div>
-                                
-                                {genealogy?.concept_genealogies && Object.keys(genealogy.concept_genealogies).length > 0 && (
-                                    <div className="mt-4">
-                                        <label className="text-[10px] mono font-medium text-stone-600 mb-2 block">
-                                            Spor begrep
-                                        </label>
-                                        <select 
-                                            value={selectedConcept || ""}
-                                            onChange={(e) => setSelectedConcept(e.target.value || null)}
-                                            className="w-full text-[11px] mono p-2 border border-stone-300 rounded bg-white">
-                                            <option value="">-- Velg begrep --</option>
-                                            {Object.keys(genealogy.concept_genealogies).map(concept => (
-                                                <option key={concept} value={concept}>
-                                                    {concept} ({genealogy.concept_genealogies[concept].total_occurrences})
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
-                            </header>
-                            
-                            <div className="flex-grow overflow-y-auto p-6 space-y-6">
-                                {/* SELECTED SOURCES */}
-                                {selectedSources.length > 0 && selectedSources.map((s, i) => {
-                                    const attr = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
-                                    return (
-                                        <div key={s.id} className="bg-white/60 backdrop-blur-md p-5 rounded-sm border border-white/40 shadow-sm space-y-4">
-                                            <div className="flex items-start justify-between">
-                                                <div>
-                                                    <div className="text-[10px] mono font-medium text-stone-600 mb-1">{s.type}</div>
-                                                    <div className="text-[11px] mono text-stone-500">{s.ref}</div>
-                                                </div>
-                                                {attr && (
-                                                    <span className={`text-[9px] mono px-2 py-1 rounded ${
-                                                        attr.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
-                                                        attr.confidence === 'medium' ? 'bg-sky-100 text-sky-700' :
-                                                        'bg-amber-100 text-amber-700'
-                                                    }`}>
-                                                        {attr.epistemic_level}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            
-                                            {/* Metadata */}
-                                            <div className="text-[10px] mono text-stone-500 space-y-1 pb-3 border-b border-stone-200">
-                                                <div>Type: {s.type}</div>
-                                                <div>År: {s.year || 'Ukjent'}</div>
-                                                {s.excerpt_relevance && (
-                                                    <div>Relevans: {Math.round(s.excerpt_relevance * 100)}%</div>
-                                                )}
-                                            </div>
-                                            
-                                            {/* Brukte utdrag */}
-                                            <div className="serif text-[15px] leading-relaxed text-stone-800">
-                                                {getHighlightedText(s.text, syntheticResponse, s.ref)}
-                                            </div>
-                                            
-                                            {s.excerpt_explanation && (
-                                                <div className="text-[10px] text-stone-600 leading-relaxed pt-3 border-t border-stone-200">
-                                                    {s.excerpt_explanation}
-                                                </div>
-                                            )}
-                                            
-                                            {/* Link til full kilde */}
-                                            <div className="pt-3 border-t border-stone-200">
-                                                <button className="text-[10px] mono text-sky-600 hover:text-sky-800 flex items-center gap-1">
-                                                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                                    </svg>
-                                                    Åpne i arkiv
-                                                </button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                                
-                                {/* GENEALOGICAL ANALYSIS - VISUAL TIMELINE */}
-                                {showGenealogy && genealogy && (
-                                    <>
-                                        {/* DISKURSIVE BRUDD - Visuell tidslinje */}
-                                        {genealogy.discursive_shifts?.shifts?.length > 0 && (
-                                            <div className="space-y-4">
-                                                <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
-                                                    <div className="w-1 h-4 bg-stone-700"></div>
-                                                    Diskursive brudd
-                                                </h3>
-                                                
-                                                <div className="relative pl-8">
-                                                    {/* Vertikal tidslinje */}
-                                                    <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-stone-300"></div>
-                                                    
-                                                    {genealogy.discursive_shifts.shifts.map((shift, i) => {
-                                                        const isMajor = shift.type === 'MAJOR_SHIFT';
-                                                        return (
-                                                            <div key={i} className="relative mb-6 last:mb-0">
-                                                                {/* Timeline dot */}
-                                                                <div className={`absolute -left-5 top-2 w-4 h-4 rounded-full border-2 border-white ${
-                                                                    isMajor ? 'bg-stone-800' : 'bg-stone-500'
-                                                                } shadow-md`}></div>
-                                                                
-                                                                {/* Content card */}
-                                                                <div className={`bg-white/60 backdrop-blur-md p-4 rounded-sm border shadow-sm ${
-                                                                    isMajor ? 'border-stone-800/30 border-l-4' : 'border-stone-400/20 border-l-2'
-                                                                }`}>
-                                                                    <div className="flex items-baseline gap-2 mb-2">
-                                                                        <span className="text-[13px] font-bold text-stone-900 mono">
-                                                                            {shift.year_from}
-                                                                        </span>
-                                                                        <svg className="w-4 h-4 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                                                                        </svg>
-                                                                        <span className="text-[13px] font-bold text-stone-900 mono">
-                                                                            {shift.year_to}
-                                                                        </span>
-                                                                        {isMajor && (
-                                                                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-stone-200 text-stone-800 font-bold mono">
-                                                                                MAJOR
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    <div className="text-[11px] text-stone-600 serif italic">
-                                                                        {shift.source_a} ↔ {shift.source_b}
-                                                                    </div>
-                                                                    <div className="mt-2 flex items-center gap-2">
-                                                                        <div className="flex-1 h-1.5 bg-stone-200 rounded-full overflow-hidden">
-                                                                            <div 
-                                                                                className={`h-full ${isMajor ? 'bg-stone-800' : 'bg-stone-500'}`}
-                                                                                style={{ width: `${shift.distance * 100}%` }}
-                                                                            ></div>
-                                                                        </div>
-                                                                        <span className="text-[10px] mono text-stone-500">
-                                                                            {(shift.distance * 100).toFixed(0)}%
-                                                                        </span>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {/* CONCEPT GENEALOGY - Visuell flyt */}
-                                        {selectedConcept && genealogy.concept_genealogies?.[selectedConcept] && (
-                                            <div className="space-y-4">
-                                                <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
-                                                    <div className="w-1 h-4 bg-sky-600"></div>
-                                                    <span className="serif italic">"{selectedConcept}"</span> over tid
-                                                </h3>
-                                                
-                                                <div className="relative pl-8">
-                                                    {/* Vertikal tidslinje */}
-                                                    <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-sky-200"></div>
-                                                    
-                                                    {genealogy.concept_genealogies[selectedConcept].occurrences.map((occ, i) => (
-                                                        <div key={i} className="relative mb-6 last:mb-0">
-                                                            {/* Timeline dot */}
-                                                            <div className="absolute -left-5 top-2 w-4 h-4 rounded-full border-2 border-white bg-sky-600 shadow-md"></div>
-                                                            
-                                                            {/* Content card */}
-                                                            <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-sky-200/40 shadow-sm border-l-2">
-                                                                <div className="text-[12px] font-bold text-sky-900 mono mb-2">
-                                                                    {occ.year}
-                                                                </div>
-                                                                <div className="text-[10px] text-stone-500 mono mb-2">
-                                                                    {occ.source_ref}
-                                                                </div>
-                                                                <p className="text-[13px] serif italic text-stone-700 leading-relaxed">
-                                                                    "...{occ.context}..."
-                                                                </p>
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                
-                                                {/* Semantic drift summary */}
-                                                {genealogy.concept_genealogies[selectedConcept].semantic_drift?.length > 0 && (
-                                                    <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-sky-200/40 shadow-sm">
-                                                        <div className="text-[10px] font-bold text-sky-900 mono mb-3">
-                                                            Semantisk bevegelse
-                                                        </div>
-                                                        <div className="space-y-2">
-                                                            {genealogy.concept_genealogies[selectedConcept].semantic_drift.map((drift, i) => (
-                                                                <div key={i} className="flex items-center gap-3">
-                                                                    <span className="text-[11px] mono text-stone-600">
-                                                                        {drift.from_year} → {drift.to_year}
-                                                                    </span>
-                                                                    <div className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                                                        drift.interpretation === 'STABLE' ? 'bg-stone-100 text-stone-700' :
-                                                                        drift.interpretation === 'SHIFTING' ? 'bg-sky-100 text-sky-700' :
-                                                                        'bg-stone-800 text-white'
-                                                                    }`}>
-                                                                        {drift.interpretation === 'STABLE' ? 'Stabil' :
-                                                                         drift.interpretation === 'SHIFTING' ? 'Endring' : 'Radikalt'}
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                        
-                                        {/* POWER/KNOWLEDGE - Kompakt oversikt */}
-                                        {genealogy.power_knowledge && (
-                                            <div className="space-y-3">
-                                                <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
-                                                    <div className="w-1 h-4 bg-blue-500"></div>
-                                                    Kildefordeling
-                                                </h3>
-                                                
-                                                <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-white/40 shadow-sm space-y-3">
-                                                    {/* Visual bars */}
-                                                    <div className="space-y-2">
-                                                        <div>
-                                                            <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-[10px] mono text-stone-600">Primærkilder</span>
-                                                                <span className="text-[11px] font-bold text-blue-700 mono">
-                                                                    {genealogy.power_knowledge.hierarchy.PRIMARY}
-                                                                </span>
-                                                            </div>
-                                                            <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
-                                                                <div 
-                                                                    className="h-full bg-blue-500"
-                                                                    style={{ 
-                                                                        width: `${(genealogy.power_knowledge.hierarchy.PRIMARY / 
-                                                                            (genealogy.power_knowledge.hierarchy.PRIMARY + 
-                                                                             genealogy.power_knowledge.hierarchy.QUOTES + 
-                                                                             genealogy.power_knowledge.hierarchy.SECONDARY)) * 100}%` 
-                                                                    }}
-                                                                ></div>
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        <div>
-                                                            <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-[10px] mono text-stone-600">Sitater</span>
-                                                                <span className="text-[11px] font-bold text-amber-700 mono">
-                                                                    {genealogy.power_knowledge.hierarchy.QUOTES}
-                                                                </span>
-                                                            </div>
-                                                            <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
-                                                                <div 
-                                                                    className="h-full bg-amber-500"
-                                                                    style={{ 
-                                                                        width: `${(genealogy.power_knowledge.hierarchy.QUOTES / 
-                                                                            (genealogy.power_knowledge.hierarchy.PRIMARY + 
-                                                                             genealogy.power_knowledge.hierarchy.QUOTES + 
-                                                                             genealogy.power_knowledge.hierarchy.SECONDARY)) * 100}%` 
-                                                                    }}
-                                                                ></div>
-                                                            </div>
-                                                        </div>
-                                                        
-                                                        <div>
-                                                            <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-[10px] mono text-stone-600">Sekundærkilder</span>
-                                                                <span className="text-[11px] font-bold text-stone-700 mono">
-                                                                    {genealogy.power_knowledge.hierarchy.SECONDARY}
-                                                                </span>
-                                                            </div>
-                                                            <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
-                                                                <div 
-                                                                    className="h-full bg-stone-500"
-                                                                    style={{ 
-                                                                        width: `${(genealogy.power_knowledge.hierarchy.SECONDARY / 
-                                                                            (genealogy.power_knowledge.hierarchy.PRIMARY + 
-                                                                             genealogy.power_knowledge.hierarchy.QUOTES + 
-                                                                             genealogy.power_knowledge.hierarchy.SECONDARY)) * 100}%` 
-                                                                    }}
-                                                                ></div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    
-                                                    <div className="pt-3 mt-3 border-t border-stone-200">
-                                                        <div className="text-[10px] mono text-stone-500 mb-1">Dominant diskurs</div>
-                                                        <div className="text-[12px] serif italic text-stone-800">{genealogy.power_knowledge.dominant_discourse}</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                    </>
-                                )}
-                            </div>
-                        </aside>
-                    )}
-
-                    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-full max-w-lg z-50 px-4">
-                        <div className="glass-membrane rounded-[2rem] p-8 transition-all duration-700 hover:shadow-2xl">
-                            <div className="relative">
-                                <textarea 
-                                    value={documentText} 
-                                    onChange={e => setDocumentText(e.target.value)} 
-                                    onKeyDown={handleKeyPress} 
-                                    placeholder="Indtast genealogisk spørgsmål..." 
-                                    className={`w-full text-[16px] serif leading-relaxed text-black border-none outline-none p-0 placeholder-black/20 resize-none bg-transparent h-[60px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
-                                    spellCheck="false" 
-                                />
-                                <div className="flex justify-end mt-2 gap-2">
-                                    {lastQuery && syntheticResponse && (
-                                        <button 
-                                            onClick={handleTryAgain} 
-                                            disabled={isSynthesizing}
-                                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-amber-500/30">
-                                            <LucideIcon name="refresh-ccw" size={12} /> Prøv Igen
-                                        </button>
-                                    )}
-                                    <button 
-                                        onClick={handleSubmit} 
-                                        disabled={isSynthesizing || !documentText.trim()} 
-                                        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/5 hover:bg-black/10 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-white/20">
-                                        <LucideIcon name="send" size={12} /> {isSynthesizing ? 'Analyserer...' : 'Genealogiser (⌘↵)'}
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            {syntheticResponse && (
-                                <div className="border-t border-white/20 mt-6 pt-6 animate-in fade-in slide-in-from-bottom-2 duration-1000">
-                                    <div className="text-[21px] serif italic text-gray-900 leading-snug tracking-tight text-center px-2">
-                                        {renderResponseWithVisuals(syntheticResponse)}
-                                    </div>
-                                    <div className="mt-6 flex justify-between items-center text-[9px] mono text-stone-500">
-                                        <span>v.10.4</span>
-                                        <button onClick={resetAll} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full">
-                                            <LucideIcon name="refresh-cw" size={12} /> RENS
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    <footer className="h-8 bg-transparent flex items-center justify-between px-8 text-[8px] mono text-stone-400 fixed bottom-0 w-full z-40">
-                        <div className="flex gap-8">
-                            <span className="text-stone-300">KADK // GENEALOGI</span>
-                            {logs.slice(-1).map((log, i) => ( 
-                                <span key={i} className="text-stone-400">[{log.time}] {log.msg}</span> 
-                            ))}
-                        </div>
-                        <span className="opacity-30">EPISTEMIC+GENEALOGICAL</span>
-                    </footer>
-                </div>
-            );
-        };
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
