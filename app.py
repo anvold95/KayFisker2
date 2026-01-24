@@ -48,8 +48,8 @@ if HF_TOKEN:
         print(f"⚠️ Hugging Face Login feil: {e}")
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv-dansk")
-EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
+INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv")
+EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"  # 768-dim (matcher Gemini-arkiv)
 
 # =====================================================
 # v10.9: MODELL-KONFIGURASJON
