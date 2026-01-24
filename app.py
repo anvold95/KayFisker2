@@ -1,12 +1,12 @@
 """
-KAY FISKER LANGUAGE MODEL v10.10
+KAY FISKER LANGUAGE MODEL v10.12
 ================================
-ENDRINGER FRA v10.9:
-- Forenklet prompt: Fjernet kompliserte FORBUDT/PÅBUDT-lister
-- Sterkere 1. person instruks: "Du SKAL svare i 1. person"
-- Anti-hallusinering: "ALDRIG oppfinn steder eller fakta"
-- Bedre kilde-format: [Fra 'titel', år] prefix
-- Økt max_new_tokens til 400 for å unngå avkutting
+ENDRINGER FRA v10.11:
+- KRITISK KILDESKILLE: Eksplisitt markering av primær vs sekundærkilder
+- Prompt advarer om at kilder etter 1965 er skrevet OM Fisker, ikke AV ham
+- Kildeformat: [DIN EGEN TEKST] vs [SEKUNDÆRKILDE]
+- Forbud mot å nevne personer født etter 1965
+- Forbud mot å påstå han skrev bøker etter sitt dødsår
 """
 
 import os
@@ -433,13 +433,33 @@ def detect_discursive_shifts(strata: list) -> dict:
         )
         
         if distance > 0.35:
+            # v10.11: Ekstraher nøkkelord som viser HVA som endret seg
+            text_a = sorted_strata[i]["text"].lower()
+            text_b = sorted_strata[i+1]["text"].lower()
+            
+            # Finn ord som er unike for hver tekst
+            words_a = set(text_a.split())
+            words_b = set(text_b.split())
+            unique_to_a = [w for w in words_a - words_b if len(w) > 5][:3]
+            unique_to_b = [w for w in words_b - words_a if len(w) > 5][:3]
+            
+            # Beskriv bruddet
+            if distance > 0.5:
+                description = f"Markant skifte i diskurs: fra fokus på {', '.join(unique_to_a) if unique_to_a else 'tidligere temaer'} til {', '.join(unique_to_b) if unique_to_b else 'nye temaer'}"
+            else:
+                description = f"Gradvis endring i terminologi og fokus"
+            
             shifts.append({
                 "year_from": sorted_strata[i]["year"],
                 "year_to": sorted_strata[i+1]["year"],
                 "distance": float(distance),
                 "type": "MAJOR_SHIFT" if distance > 0.5 else "MINOR_SHIFT",
                 "source_a": sorted_strata[i]["ref"],
-                "source_b": sorted_strata[i+1]["ref"]
+                "source_b": sorted_strata[i+1]["ref"],
+                # NY: Forklaring av hva bruddet handler om
+                "description": description,
+                "keywords_before": unique_to_a,
+                "keywords_after": unique_to_b
             })
     
     if len(embeddings) >= 3:
@@ -555,15 +575,25 @@ def analyze_power_knowledge_nexus(strata: list) -> dict:
         "QUOTES": type_counts.get("QUOTES", 0)
     }
     
-    if type_counts.get("PRIMARY", 0) > type_counts.get("QUOTES", 0):
-        dominant = "EIGENMACHT"
+    # v10.11: Mer forståelig terminologi
+    primary_count = type_counts.get("PRIMARY", 0)
+    quotes_count = type_counts.get("QUOTES", 0)
+    
+    if primary_count > quotes_count:
+        dominant = "FISKERS EGNE TEKSTER"
+        dominant_explanation = f"Svaret hviler primært på {primary_count} av Fiskers egne tekster"
+    elif quotes_count > primary_count:
+        dominant = "SITATER OG REFERANSER"
+        dominant_explanation = f"Svaret hviler primært på {quotes_count} sitater fra andre kilder"
     else:
-        dominant = "BORROWED_AUTHORITY"
+        dominant = "BLANDET"
+        dominant_explanation = "Svaret kombinerer Fiskers tekster med eksterne referanser"
     
     return {
         "authority_citations": authority_markers["citations"],
         "hierarchy": authority_markers["authority_hierarchy"],
         "dominant_discourse": dominant,
+        "dominant_explanation": dominant_explanation,  # NY
         "total_authority_markers": len(authority_markers["citations"])
     }
 
@@ -839,50 +869,76 @@ async def api_chat(req: Request):
             "state": "FRAKOBLET",
             "intensity": 0.0,
             "genealogy": {},
-            "version": "v10.10"
+            "version": "v10.12"
         }, 200)
     
     # =====================================================
-    # v10.10 SYSTEM PROMPT - FORENKLET + EFFEKTIV
-    # Inspirert av Gemini-promptens enkelhet, men med syntese
+    # v10.12 SYSTEM PROMPT - KRITISK KILDESKILLE
+    # Modellen MÅ skille mellom tekster AV Fisker og tekster OM Fisker
     # =====================================================
-    system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt. Du svarer i 1. person som om du er Fisker selv.
+    system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiet.
 
-HVORDAN DU SVARER:
-1. Svar KUN basert på kilderne nedenfor - ALDRIG oppfinn steder, navn eller fakta
-2. Syntetisér informationen med dine egne ord - kopier ikke sætninger ordret
-3. Vær konkret: nævn årstal, bygningsnavne, personer fra kilderne
-4. Vis nuance: hvis kilderne indeholder både ros og kritik, inkludér begge
-5. Svar i 1. person ("jeg", "mit arbejde", "mine kolleger")
+DIN STEMME OG STIL:
+Du taler som i dine forelæsninger og artikler - præcis, faglig, men med personlige vurderinger:
+- "det fineste exempel jeg har kunnet finde"
+- "det har moret mig at medtage her"  
+- "forekommer mig at være et af de smukkeste og mest afklarede exempler"
 
-HVIS SVARET IKKE FINDES I KILDERNE:
-Sig ærligt at du ikke kan svare på det ud fra det tilgængelige materiale.
+KRITISK - KILDEHÅNDTERING:
+⚠️ Kilder fra før 1965 (dit dødsår) kan være dine egne tekster - tal om dem i 1. person.
+⚠️ Kilder fra EFTER 1965 er skrevet OM dig af andre - disse er IKKE dine ord!
+⚠️ "Kay Fisker: Moderne arkitektur - Levende tradition" (2020) er Martin Søbergs monografi OM dig - du skrev den IKKE.
+⚠️ Hvis en kilde taler om dig i 3. person ("Fisker mente...", "Kay Fisker var...") er det en sekundærkilde.
 
-EKSEMPEL PÅ GOD TONE:
-"I mine undersøgelser af de københavnske boligtyper fra 1936 fandt jeg, at..."
-"Sammen med C.F. Møller arbejdede jeg på universitetet i Aarhus, hvor vi..."
-"Le Corbusier repræsenterer for mig den artistiske tilgang, mens Wright..."
+SÅDAN SVARER DU:
+1. Brug KUN dine EGNE tekster (før 1965) som grundlag for dine meninger
+2. Sekundærkilder kan give kontekst, men du taler IKKE som om du skrev dem
+3. Giv personlige vurderinger: "jeg finder", "forekommer mig", "efter min mening"
+4. Vær konkret: navne, årstal, bygninger, priser, mål
+5. Hvis du ikke har egne kilder om emnet, sig det ærligt
 
-Svar på dansk. 4-6 sætninger. Vær faglig, præcis og personlig."""
+FORBUDT:
+❌ At påstå du skrev bøger efter 1965
+❌ At nævne personer der blev født efter dit dødsår
+❌ At tale om dig selv i 3. person
+❌ Generiske udsagn uden konkrete referencer
+
+EKSEMPEL PÅ GOD FISKER-STEMME:
+"Bakkehusene fra 1922 var en værdifuld indsats af Bentsen og Henningsen. Der er 
+paafaldende ligheder mellem Henningsens arbejder og M.H. Baillie Scotts projekt 
+fra 1902, som det har moret mig at medtage i min undersøgelse."
+
+Svar på dansk. 4-6 sætninger."""
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     if temporal_context:
         system_prompt += f"\n\nTidsperiode:\n{temporal_context}"
     
     # =====================================================
-    # v10.10: KILDE-FORMAT MED TITTEL-PREFIX
-    # Inspirert av Gemini: [Fra 'titel', år]
+    # v10.12: KILDE-FORMAT MED TYDELIG PRIMÆR/SEKUNDÆR-MARKERING
+    # Kritisk for at modellen ikke blander egne tekster med tekster OM Fisker
     # =====================================================
     source_lines = []
     for i, m in enumerate(matches, 1):
-        text = m["metadata"].get("text", "")[:600]  # Mer kontekst
-        source_type = m["metadata"].get("__ns", "primary").upper()
+        text = m["metadata"].get("text", "")[:600]
         year = m["metadata"].get("year", "?")
         title = m["metadata"].get("title", "Arkiv")
         author = m["metadata"].get("author", "Kay Fisker")
         
-        # Gemini-stil prefix som hjelper modellen forstå kontekst
-        source_lines.append(f"[KILDE {i} - Fra '{title}', {year}]:\n{text}")
+        # v10.12: Eksplisitt markering av kildetype
+        try:
+            year_int = int(year) if year != "?" else 1950
+        except:
+            year_int = 1950
+            
+        if year_int > 1965 or author != "Kay Fisker":
+            # SEKUNDÆRKILDE - skrevet OM Fisker
+            source_prefix = f"[SEKUNDÆRKILDE {i} - '{title}' av {author}, {year}]\n⚠️ Dette er skrevet OM Kay Fisker, ikke AV ham:"
+        else:
+            # PRIMÆRKILDE - Fiskers egne tekster
+            source_prefix = f"[DIN EGEN TEKST {i} - '{title}', {year}]\n✅ Dette er dine egne ord:"
+        
+        source_lines.append(f"{source_prefix}\n{text}")
     
     context = "\n\n".join(source_lines)
     
@@ -914,7 +970,7 @@ Kay Fisker:"""
     generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
-    # Bygg strata
+    # Bygg strata med FULL metadata for frontend
     strata = []
     for i, m in enumerate(matches):
         full_text = m["metadata"].get("text", "")
@@ -927,16 +983,23 @@ Kay Fisker:"""
             85
         )
         
+        # v10.11: Mer metadata for Arbejdsbord
         strata.append({
             "id": f"source_{i}",
             "text": full_text,
             "excerpt": excerpt_info["excerpt"],
             "excerpt_relevance": excerpt_info["relevance"],
             "excerpt_explanation": excerpt_info["explanation"],
-            "ref": f"{m['metadata'].get('author', 'Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
+            "ref": f"{m['metadata'].get('author', 'Kay Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
             "year": m["metadata"].get("year"),
             "type": m["metadata"].get("__ns", "primary").upper(),
-            "score": m.get("score", 0.0)
+            "score": m.get("score", 0.0),
+            # NY METADATA for frontend
+            "title": m["metadata"].get("title", "Ukjent kilde"),
+            "author": m["metadata"].get("author", "Kay Fisker"),
+            "source_type": m["metadata"].get("source_type", "arkiv"),
+            "publication": m["metadata"].get("publication", None),
+            "page": m["metadata"].get("page", None),
         })
 
     genealogy = await run_in_threadpool(
@@ -969,7 +1032,7 @@ Kay Fisker:"""
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
         "genealogy": genealogy,
-        "version": "v10.10",
+        "version": "v10.12",
         "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
     }
 
