@@ -28,5 +28,6 @@ espnet==202402
 numba==0.58.1
 librosa==0.10.1
 soundfile
-
+# v10.13: Gemini for to-trinns arkitektur
+google-generativeai
 
