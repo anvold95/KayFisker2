@@ -1,13 +1,13 @@
 """
-KAY FISKER LANGUAGE MODEL v10.7
+KAY FISKER LANGUAGE MODEL v10.9
 ===============================
-ENDRINGER FRA v10.6:
-- System prompt: Eksplisitt FORBUDT/PÅBUDT med eksempler
-- Nummererte kilder [KILDE 1], [KILDE 2]...
-- Temperature: 0.38 → 0.25
-- top_p: 0.88 → 0.85
-- top_k: 40 → 30
-- Gjentatt instruks før spørsmål
+ENDRINGER FRA v10.8:
+- Chain-of-thought prompting: Modellen må TENKE før den svarer
+- Eksplisitt forbud mot ordrett kopiering
+- Konkret DÅRLIG vs GOD eksempel i prompt
+- Temperature: 0.35 → 0.45 (mer kreativ syntese)
+- repetition_penalty: 1.25 → 1.30
+- Valgfri Mixtral 8x7B støtte (USE_MIXTRAL=true)
 """
 
 import os
@@ -52,6 +52,19 @@ PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-corpus-1024")
 EMBED_MODEL = "mixedbread-ai/mxbai-embed-large-v1"
 
+# =====================================================
+# v10.9: MODELL-KONFIGURASJON
+# Sett USE_MIXTRAL=true for bedre reasoning (krever mer GPU)
+# =====================================================
+USE_MIXTRAL = os.environ.get("USE_MIXTRAL", "false").lower() == "true"
+
+if USE_MIXTRAL:
+    BASE_MODEL = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    print("🧠 Konfigurert for Mixtral 8x7B (bedre reasoning, ingen LoRA)")
+else:
+    BASE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+    print("🧠 Konfigurert for Mistral 7B + LoRA")
+
 # Last timeline
 FISKER_TIMELINE = ""
 try:
@@ -95,26 +108,31 @@ GENEALOGICAL_CONCEPTS = [
 def load_model_logic():
     global pipe, tts, tokenizer, embedder, reranker, pinecone_index
     
-    BASE = "mistralai/Mistral-7B-Instruct-v0.3"
     LORA = "anvold/fisker-lora-clean"
-    print("🧩 Laster base-modell + LoRA-adapter …")
     
-    try:
-        adapter_path = hf_hub_download(LORA, "adapter_config.json")
-        with open(adapter_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        allowed_keys = {
-            "base_model_name_or_path", "bias", "inference_mode", "lora_alpha",
-            "lora_dropout", "r", "target_modules", "task_type", "peft_type",
-            "fan_in_fan_out", "use_rslora", "alpha_pattern", "rank_pattern"
-        }
-        cfg = {k: v for k, v in cfg.items() if k in allowed_keys}
-        with open(adapter_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
-    except Exception as e:
-        print(f"⚠️ Feil under adapter-fix: {e}")
+    if USE_MIXTRAL:
+        print(f"🧩 Laster Mixtral 8x7B (uten LoRA) …")
+    else:
+        print(f"🧩 Laster Mistral 7B + LoRA-adapter …")
+    
+    # LoRA adapter fix (kun for Mistral 7B)
+    if not USE_MIXTRAL:
+        try:
+            adapter_path = hf_hub_download(LORA, "adapter_config.json")
+            with open(adapter_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            allowed_keys = {
+                "base_model_name_or_path", "bias", "inference_mode", "lora_alpha",
+                "lora_dropout", "r", "target_modules", "task_type", "peft_type",
+                "fan_in_fan_out", "use_rslora", "alpha_pattern", "rank_pattern"
+            }
+            cfg = {k: v for k, v in cfg.items() if k in allowed_keys}
+            with open(adapter_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Feil under adapter-fix: {e}")
 
-    tokenizer = AutoTokenizer.from_pretrained(BASE)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -122,13 +140,18 @@ def load_model_logic():
     torch_dtype = torch.float16 if device == "cuda" else torch.float32
 
     base_model = AutoModelForCausalLM.from_pretrained(
-        BASE,
+        BASE_MODEL,
         torch_dtype=torch_dtype,
         device_map="auto",
     )
 
-    model = PeftModel.from_pretrained(base_model, LORA)
-    model = model.merge_and_unload()
+    if USE_MIXTRAL:
+        model = base_model
+        print("✅ Mixtral 8x7B lastet (ren base-modell)")
+    else:
+        model = PeftModel.from_pretrained(base_model, LORA)
+        model = model.merge_and_unload()
+        print("✅ Mistral 7B + LoRA merged")
     model.eval()
 
     pipe = pipeline(
@@ -815,47 +838,55 @@ async def api_chat(req: Request):
             "state": "FRAKOBLET",
             "intensity": 0.0,
             "genealogy": {},
-            "version": "v10.7"
+            "version": "v10.8"
         }, 200)
     
     # =====================================================
-    # v10.7 SYSTEM PROMPT - KILDE-TVANG + SYNTESE
+    # v10.9 SYSTEM PROMPT - CHAIN-OF-THOUGHT + SYNTESE
+    # Modellen må TENKE og FORSTÅ før den svarer
     # =====================================================
     system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt.
 
-KRITISK INSTRUKS:
-Du SKAL bruge konkrete detaljer fra kilderne. Generiske udsagn er FORBUDT.
+DIN OPGAVE:
+Du skal svare på spørgsmål ved at FORSTÅ og SYNTETISERE kildematerialet - 
+IKKE ved at kopiere sætninger ordret.
 
-SÅDAN SVARER DU:
-1. Find 2-3 specifikke fakta i kilderne (tal, steder, navne, materialer)
-2. Byg svaret omkring DISSE fakta
-3. Brug terminologi direkte fra kilderne
-4. KOMBINER information fra FLERE kilder - ikke bare én
+TÆNK FØRST (internt, skriv ikke ud):
+1. Hvad handler kilderne EGENTLIG om? Hvad er KONTEKSTEN?
+2. Hvad er MIN (Kay Fiskers) HOLDNING til emnet?
+3. Hvilke KONKRETE EKSEMPLER kan jeg bruge?
+4. Hvordan ville JEG formulere dette med MINE egne ord?
 
-FORBUDT (brug ALDRIG disse uden kildecitat):
-❌ "funktionel organisation"
-❌ "lyshed og transparens"
-❌ "integration med naturen"
-❌ "moderne arkitektur"
-❌ "rumlig organisation"
-❌ At gentage kun ÉN sætning fra kilderne
+KRITISKE REGLER:
+• ALDRIG kopier en hel sætning ordret fra kilderne
+• ALTID reformuler med dine egne ord
+• KOMBINER indsigter fra FLERE kilder
+• VÆR SPECIFIK: nævn navne, værker, årstal
+• VÆR NUANCERET: vis at du forstår kompleksiteten
+
+FORBUDT:
+❌ At kopiere sætninger direkte fra kilderne
+❌ "funktionel organisation", "lyshed og transparens" (generiske fraser)
+❌ At bruge kun ÉN kilde
+❌ Svar der lyder som en Wikipedia-artikel
 
 PÅBUDT:
-✅ Konkrete projektnavne fra kilderne (Pessac, Vigerslev, Villa i Garches, etc.)
-✅ Personer nævnt i kilderne (Rasmussen, Le Corbusier, Bentsen, Wright, Gropius, etc.)
-✅ Tekniske detaljer (mål, priser, materialer)
-✅ Direkte parafraser fra kildeteksten
-✅ BRUG kildens egne adjektiver og karakteristikker ordret
-✅ Hvis kilden kalder nogen "maskinromantiker", "naturromantiker", "artistisk" - BRUG disse ord
-✅ Hvis kilden indeholder KRITIK - inkludér kritikken i dit svar
+✅ Konkrete navne: Wright, Gropius, Asplund, Le Corbusier, Bentsen, Rasmussen
+✅ Konkrete værker: Villa i Garches, Weissenhofsiedlung, Vigerslev Allé, etc.
+✅ Kildens adjektiver: "maskinromantiker", "naturromantiker", "socialt indstillet"
+✅ Kritiske perspektiver hvis kilderne indeholder dem
 
-VIGTIGT OM MENINGER:
-Når du bliver spurgt om din mening om en person (f.eks. Le Corbusier):
-- Find BÅDE positive og kritiske udsagn i kilderne
-- Syntesér et nuanceret svar der afspejler kompleksiteten
-- Brug konkrete eksempler (bygningsnavne, årstal)
+EKSEMPEL PÅ DÅRLIGT SVAR (kopierer ordret):
+"Le Corbusier er først og fremmest kunstneren, den artistisk betonede."
 
-Svar på dansk. 3-5 sætninger. Vær KONKRET og NUANCERET."""
+EKSEMPEL PÅ GODT SVAR (syntetiserer og forstår):
+"Blandt de store internationale arkitekter ser jeg Le Corbusier som den mest 
+artistisk orienterede - en latinskinspireret maskinromantiker, om man vil. 
+Hans tilgang adskiller sig markant fra Wrights organiske naturromantik og 
+Gropius' sociale engagement. Men netop denne kunstneriske betoning kan blive 
+problematisk når den moderne bolig skal være beskeden og funktionel."
+
+Svar på dansk. 3-5 sætninger. SYNTETISÉR, kopier ikke."""
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     if temporal_context:
@@ -877,28 +908,32 @@ Svar på dansk. 3-5 sætninger. Vær KONKRET og NUANCERET."""
 
 ### KILDEMATERIALE ###
 {context}
-### SLUT ###
+### SLUT PÅ KILDER ###
 
-HUSK: Dit svar SKAL indeholde konkrete detaljer fra kilderne ovenfor. Ingen generaliseringer.
+VIGTIGE SPØRGSMÅL TIL DIG SELV FØR DU SVARER:
+- Hvad er hovedpointerne i kilderne?
+- Hvad er MIN personlige holdning som Kay Fisker?
+- Hvordan kan jeg formulere dette UDEN at kopiere ordret?
 
 Spørgsmål: {user_prompt}
 
-Kay Fisker:"""
+Kay Fisker (svar med egne ord, syntetisér fra kilderne):"""
     
     # =====================================================
-    # v10.7 PARAMETERE - strammere sampling
+    # =====================================================
+    # v10.9 PARAMETERE - høyere temperature for kreativ syntese
     # =====================================================
     result = pipe(
         full_prompt,
-        max_new_tokens=250,
-        temperature=0.25,       # NED fra 0.38
-        top_p=0.85,             # NED fra 0.88
-        top_k=30,               # NED fra 40
-        repetition_penalty=1.20,
+        max_new_tokens=300,          # OPP fra 250
+        temperature=0.45,            # OPP fra 0.35 for kreativitet
+        top_p=0.90,                  # OPP fra 0.88
+        top_k=50,                    # OPP fra 40
+        repetition_penalty=1.30,     # OPP fra 1.25 - straffer kopiering
         do_sample=True
     )
     
-    generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
+    generated_text = result[0]["generated_text"].split("Kay Fisker (svar med egne ord, syntetisér fra kilderne):")[-1].strip()
     generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
@@ -957,7 +992,8 @@ Kay Fisker:"""
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
         "genealogy": genealogy,
-        "version": "v10.7"
+        "version": "v10.9",
+        "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
     }
 
 @app.get("/tts")
