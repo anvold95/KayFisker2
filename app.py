@@ -1,3 +1,15 @@
+"""
+KAY FISKER LANGUAGE MODEL v10.7
+===============================
+ENDRINGER FRA v10.6:
+- System prompt: Eksplisitt FORBUDT/PÅBUDT med eksempler
+- Nummererte kilder [KILDE 1], [KILDE 2]...
+- Temperature: 0.38 → 0.25
+- top_p: 0.88 → 0.85
+- top_k: 40 → 30
+- Gjentatt instruks før spørsmål
+"""
+
 import os
 import json
 import re
@@ -161,7 +173,7 @@ def normalize_orthography(txt: str) -> str:
 
 def enhance_query(user_prompt: str) -> str:
     """
-    MINIMAL query expansion v10.6
+    MINIMAL query expansion v10.7
     - Kun konkrete værker får expansion
     - Alt annet: trust embedder
     """
@@ -655,7 +667,7 @@ def _fetch_ns(ns: str, qvec, top_k: int):
 
 def pinecone_search_logic(user_prompt: str, total_results: int = 8):
     """
-    RAG-søk med PRIMARY-first strategi v10.6
+    RAG-søk med PRIMARY-first strategi v10.7
     """
     if not (pinecone_index and embedder):
         print("⚠️ Pinecone eller embedder ikke tilgjengelig")
@@ -694,10 +706,10 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
             scores = reranker.predict(pairs)
             cleaned_pool[ns] = [x for _, x in sorted(zip(scores, cleaned_pool[ns]), key=lambda z: z[0], reverse=True)]
 
-    # PRIMARY-FIRST SELECTION v10.6
+    # PRIMARY-FIRST SELECTION v10.7
     final_selection = []
     
-    # Start med 2-3 PRIMARY
+    # Start med 3 PRIMARY
     for _ in range(3):
         if cleaned_pool["primary"]:
             final_selection.append(cleaned_pool["primary"].pop(0))
@@ -754,58 +766,81 @@ async def api_chat(req: Request):
             "visuals": [],
             "state": "FRAKOBLET",
             "intensity": 0.0,
-            "genealogy": {}
+            "genealogy": {},
+            "version": "v10.7"
         }, 200)
     
-    context = "\n---\n".join([m["metadata"]["text"] for m in matches])
-    
-    # FORBEDRET SYSTEM PROMPT v10.6 - med kildeprioritet
-    system_prompt = (
-        "Du er Kay Fisker (1893–1965), dansk arkitekt.\n"
-        "Du svarer på dansk baseret på kildematerialet.\n\n"
-        
-        "KILDEPRIORITET:\n"
-        "1. PRIMÆRE KILDER (dine egne skrifter) - brug disse FØRST\n"
-        "2. Sekundære kilder (om dig) - kun for kontekst\n"
-        "3. Hvis sekundær kilde beskriver dig: Reformuler IKKE som eget udsagn\n\n"
-        
-        "EPISTEMISKE NIVEAUER:\n"
-        "• ARKIVFAKTA: Citér/parafraser fra dine tekster eksplisit\n"
-        "• ARKIV-NÆR: Kombiner kilder, markér det ('Mine skrifter viser...')\n"
-        "• KONTEKST: Når arkivet er tavst, kontekstualisér ('Som arkitekt dengang...')\n\n"
-        
-        "FORBUDT:\n"
-        "- Opfinde data som ikke står i kilderne\n"
-        "- Generiske modernisme-klichéer\n"
-        "- Abstrakte selv-refleksjoner\n"
-        "- Blande dansk og norsk\n\n"
-        
-        "Svar i 2-4 setninger. Vær konkret."
-    )
+    # =====================================================
+    # v10.7 SYSTEM PROMPT - KILDE-TVANG
+    # =====================================================
+    system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt.
+
+KRITISK INSTRUKS:
+Du SKAL bruge konkrete detaljer fra kilderne. Generiske udsagn er FORBUDT.
+
+SÅDAN SVARER DU:
+1. Find 2-3 specifikke fakta i kilderne (tal, steder, navne, materialer)
+2. Byg svaret omkring DISSE fakta
+3. Brug terminologi direkte fra kilderne
+
+FORBUDT (brug ALDRIG disse uden kildecitat):
+❌ "funktionel organisation"
+❌ "lyshed og transparens"
+❌ "integration med naturen"
+❌ "moderne arkitektur"
+❌ "rumlig organisation"
+
+PÅBUDT:
+✅ Konkrete projektnavne fra kilderne (Pessac, Vigerslev, etc.)
+✅ Personer nævnt i kilderne (Rasmussen, Le Corbusier, Bentsen, etc.)
+✅ Tekniske detaljer (mål, priser, materialer)
+✅ Direkte parafraser fra kildeteksten
+
+Svar på dansk. 2-4 sætninger. Vær KONKRET."""
     
     temporal_context = extract_temporal_context(user_prompt, FISKER_TIMELINE)
     if temporal_context:
-        system_prompt += f"\nTidsperiode:\n{temporal_context}\n"
+        system_prompt += f"\n\nTidsperiode:\n{temporal_context}"
     
-    full_prompt = (
-        f"System: {system_prompt}\n\n"
-        f"### KILDEMATERIALE ###\n{context}\n### SLUT ###\n\n"
-        f"Spørgsmål: {user_prompt}\n\n"
-        f"Kay Fisker:"
-    )
+    # =====================================================
+    # v10.7: NUMMEREREDE KILDER
+    # =====================================================
+    source_lines = []
+    for i, m in enumerate(matches, 1):
+        text = m["metadata"].get("text", "")[:450]  # Litt mer kontekst
+        source_type = m["metadata"].get("__ns", "primary").upper()
+        year = m["metadata"].get("year", "?")
+        source_lines.append(f"[KILDE {i}] ({source_type}, {year}):\n{text}")
     
+    context = "\n\n".join(source_lines)
+    
+    full_prompt = f"""System: {system_prompt}
+
+### KILDEMATERIALE ###
+{context}
+### SLUT ###
+
+HUSK: Dit svar SKAL indeholde konkrete detaljer fra kilderne ovenfor. Ingen generaliseringer.
+
+Spørgsmål: {user_prompt}
+
+Kay Fisker:"""
+    
+    # =====================================================
+    # v10.7 PARAMETERE - strammere sampling
+    # =====================================================
     result = pipe(
         full_prompt,
-        max_new_tokens=280,
-        temperature=0.38,
-        top_p=0.88,
-        top_k=40,
-        repetition_penalty=1.18,
+        max_new_tokens=250,
+        temperature=0.25,       # NED fra 0.38
+        top_p=0.85,             # NED fra 0.88
+        top_k=30,               # NED fra 40
+        repetition_penalty=1.20,
         do_sample=True
     )
     
     generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
-    generated_text = re.sub(r"^(System:|Spørgsmål:|###).*", "", generated_text, flags=re.MULTILINE).strip()
+    generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
     # Bygg strata
@@ -862,7 +897,8 @@ async def api_chat(req: Request):
         "visuals": visuals,
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
-        "genealogy": genealogy
+        "genealogy": genealogy,
+        "version": "v10.7"
     }
 
 @app.get("/tts")
