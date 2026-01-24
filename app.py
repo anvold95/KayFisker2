@@ -1,13 +1,11 @@
 """
-KAY FISKER LANGUAGE MODEL v10.13
+KAY FISKER LANGUAGE MODEL v10.14
 ================================
-TO-TRINNS ARKITEKTUR:
-1. Gemini 2.5 Flash: Leser kilder, ekstraherer fakta (kildetro)
-2. Mistral 7B + LoRA: Omformulerer i Fiskers stemme (personlighet)
-
-Kombinerer det beste fra begge verdener:
-- Geminis evne til å lese og syntetisere kilder
-- LoRAs finetuning på Fiskers skrivestil
+GEMINI SOM ASSISTENT, IKKE PORTVAKT:
+- Begge modeller ser kildene
+- Gemini gir et "hint" om viktige fakta
+- Mistral+LoRA har alltid tilgang til originalkildene
+- Mer robust: fungerer selv om Gemini feiler
 """
 
 import os
@@ -892,16 +890,15 @@ async def api_chat(req: Request):
             "state": "FRAKOBLET",
             "intensity": 0.0,
             "genealogy": {},
-            "version": "v10.13"
+            "version": "v10.14"
         }, 200)
     
     # =====================================================
-    # v10.13: TO-TRINNS ARKITEKTUR
-    # Trinn 1: Gemini ekstraherer fakta fra kilder
-    # Trinn 2: LoRA omformulerer i Fiskers stemme
+    # v10.14: GEMINI SOM ASSISTENT, IKKE PORTVAKT
+    # Begge modeller ser kildene - Gemini hjelper med fokus
     # =====================================================
     
-    # Bygg kilde-kontekst for begge trinn
+    # Bygg kilde-kontekst
     source_lines = []
     for i, m in enumerate(matches, 1):
         text = m["metadata"].get("text", "")[:600]
@@ -924,101 +921,63 @@ async def api_chat(req: Request):
     context = "\n\n".join(source_lines)
     
     # =====================================================
-    # TRINN 1: GEMINI EKSTRAHERER FAKTA
+    # TRINN 1: GEMINI LAGER FAKTA-HINT (valgfritt hjelpemiddel)
     # =====================================================
-    gemini_facts = None
+    gemini_summary = ""
     if gemini_model:
         try:
-            gemini_prompt = f"""Du er en arkivforsker som analyserer Kay Fiskers tekster.
-
-OPPGAVE: Basert UTELUKKENDE på kildene nedenfor, ekstraher de konkrete fakta som er relevante for spørsmålet.
-
-REGLER:
-1. Kun fakta som EKSPLISITT står i kildene - ALDRI oppfinn noe
-2. Skill mellom PRIMÆRKILDER (Fiskers egne tekster før 1965) og SEKUNDÆRKILDER (tekster OM Fisker)
-3. Inkluder konkrete: årstall, navn, bygninger, steder, tall
-4. Hvis kilden er en sekundærkilde, si "Ifølge [forfatter]..." 
-5. Hvis svaret ikke finnes i kildene, si det
+            gemini_prompt = f"""Les disse kildene og list de viktigste fakta relevant for spørsmålet.
 
 KILDER:
 {context}
 
 SPØRSMÅL: {user_prompt}
 
-FAKTA (kun det som står i kildene):"""
+List 3-5 konkrete fakta (bygninger, årstall, arkitekter, steder, sitater fra kildene):"""
 
-            gemini_response = gemini_model.generate_content(gemini_prompt)
-            gemini_facts = gemini_response.text.strip()
-            print(f"   ✅ Gemini ekstraherte fakta: {gemini_facts[:100]}...")
+            response = gemini_model.generate_content(gemini_prompt)
+            gemini_summary = response.text.strip()
+            print(f"   ✅ Gemini-hint: {gemini_summary[:100]}...")
         except Exception as e:
-            print(f"   ⚠️ Gemini feil: {e}")
-            gemini_facts = None
+            print(f"   ⚠️ Gemini feilet (fortsetter uten): {e}")
+            gemini_summary = ""
     
     # =====================================================
-    # TRINN 2: LORA OMFORMULERER I FISKERS STEMME
+    # TRINN 2: MISTRAL+LORA FÅR ALT - kilder OG Gemini-hint
     # =====================================================
-    if gemini_facts:
-        # Bruk Geminis fakta som grunnlag
-        lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
+    
+    # Bygg hint-seksjon hvis Gemini ga noe
+    hint_section = ""
+    if gemini_summary:
+        hint_section = f"""
+### NØKKELFAKTA (fra analyse) ###
+{gemini_summary}
+### SLUT NØKKELFAKTA ###
+"""
+    
+    lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
 
-FAKTA FRA ARKIVET (verifisert):
-{gemini_facts}
-
-DIN OPPGAVE: Omformuler disse fakta i din egen stemme og stil.
-
-DIN STEMME (varier uttrykkene, ikke gjenta samme åpning):
-- "forekommer mig at være"
-- "det har moret mig at medtage"
-- "jeg finder det bemærkelsesværdigt"
-- "efter min opfattelse"
-- "i mine studier har jeg observeret"
-- Vær konkret, faglig, personlig
-- VIKTIG: Start IKKE med "Det fineste eksempel" - varier åpningene!
-
-FORBUDT:
-- Å legge til fakta som ikke er nevnt ovenfor
-- Å nevne bøker eller personer etter 1965
-- Å snakke om deg selv i 3. person
-
-Svar på dansk. 4-6 sætninger.
+### ARKIVKILDER ###
+{context}
+### SLUT KILDER ###
+{hint_section}
+REGLER:
+- Svar KUN basert på kildene ovenfor
+- Nevn konkrete: bygninger, årstall, steder, personer
+- Hvis kilden er fra efter 1965, er det skrevet OM dig - ikke dine egne ord
+- Bruk din naturlige stemme som arkitekt og professor
 
 Spørsmål: {user_prompt}
-
-Kay Fisker:"""
-    else:
-        # Fallback til original metode (uten Gemini)
-        system_prompt = """Du er Kay Fisker (1893–1965), dansk arkitekt og professor ved Kunstakademiet.
-
-DIN STEMME OG STIL (varier uttrykkene):
-- "forekommer mig at være"
-- "det har moret mig at medtage"
-- "jeg finder det bemærkelsesværdigt"
-- "efter min opfattelse"
-- VIKTIG: Start IKKE med "Det fineste eksempel" hver gang!
-
-KRITISK:
-⚠️ Kilder fra EFTER 1965 er skrevet OM dig - ikke dine egne ord!
-⚠️ Brug KUN fakta fra kildene - ALDRIG oppfinn
-
-Svar på dansk. 4-6 sætninger."""
-        
-        lora_prompt = f"""System: {system_prompt}
-
-### KILDER ###
-{context}
-### SLUT ###
-
-Spørgsmål: {user_prompt}
 
 Kay Fisker:"""
     
     # Generer med LoRA
     result = pipe(
         lora_prompt,
-        max_new_tokens=350,
-        temperature=0.45,
-        top_p=0.88,
-        top_k=45,
+        max_new_tokens=400,
+        temperature=0.35,  # Lavere for mer presisjon
+        top_p=0.85,
+        top_k=40,
         repetition_penalty=1.20,
         do_sample=True
     )
@@ -1089,7 +1048,7 @@ Kay Fisker:"""
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
         "genealogy": genealogy,
-        "version": "v10.13",
+        "version": "v10.14",
         "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
     }
 
