@@ -874,11 +874,21 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
 async def api_chat(req: Request):
     data = await req.json()
     user_prompt = data.get("message", "")
+    history = data.get("history", [])  # NY: samtalehistorik
     
     if len(user_prompt.strip()) < 3:
-        return JSONResponse({"error": "Spørsmål for kort"}, 400)
+        return JSONResponse({"error": "Spørgsmål for kort"}, 400)
     
-    matches = pinecone_search_logic(user_prompt, total_results=8)
+    # NY: Byg søgeforespørgsel der inkluderer kontekst fra historik
+    search_query = user_prompt
+    if history and len(history) >= 2:
+        # Tag sidste udveksling med for bedre søgning
+        last_exchange = history[-2:]  # sidste spørgsmål + svar
+        context_hint = " ".join([h.get("content", "")[:100] for h in last_exchange])
+        search_query = f"{user_prompt} {context_hint}"
+        print(f"   🔄 Samtale-kontekst: {len(history)} tidligere beskeder")
+    
+    matches = pinecone_search_logic(search_query, total_results=8)
     
     if not matches:
         return JSONResponse({
@@ -961,9 +971,25 @@ List IKKE tekniske detaljer som etager, materialer, priser medmindre de er del a
 ### SLUT NØGLEPUNKTER ###
 """
     
+    # NY: Byg samtalehistorik-sektion
+    history_section = ""
+    if history and len(history) >= 2:
+        # Inkluder de sidste 2-4 beskeder for kontekst
+        recent_history = history[-4:] if len(history) >= 4 else history
+        history_lines = []
+        for h in recent_history:
+            role = "Spørgsmål" if h.get("role") == "user" else "Dit svar"
+            content = h.get("content", "")[:300]  # Begræns længde
+            history_lines.append(f"{role}: {content}")
+        history_section = f"""
+### TIDLIGERE I SAMTALEN ###
+{chr(10).join(history_lines)}
+### SLUT SAMTALE ###
+"""
+    
     lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
 Du svarer på dansk baseret på kildematerialet.
-
+{history_section}
 ### ARKIVKILDER ###
 {context}
 ### SLUT KILDER ###
@@ -982,6 +1008,7 @@ DIN STEMME:
 - Giv personlige vurderinger: "forekommer mig", "jeg finder", "det har moret mig"
 - Sammenlign konkrete eksempler: bygninger, arkitekter, årstal
 - Vær faglig men med holdning - du er professor, ikke leksikon
+{f"- Byg videre på det du lige har sagt, hvis spørgsmålet refererer til tidligere svar" if history else ""}
 
 FORBUDT:
 - Opfinde data som ikke står i kilderne
