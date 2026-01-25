@@ -1,0 +1,20 @@
+# Cog configuration for Kay Fisker Mistral+LoRA model
+# Brukes for å deploye modellen til Replicate
+
+build:
+  gpu: true
+  cuda: "12.1"
+  python_version: "3.11"
+
+  python_packages:
+    - "torch==2.1.0"
+    - "transformers>=4.35.0"
+    - "peft==0.11.1"
+    - "accelerate>=0.24.0"
+    - "safetensors"
+    - "huggingface-hub"
+
+  run:
+    - echo "Downloading Mistral 7B + LoRA adapter..."
+
+predict: "predict.py:Predictor"

@@ -1,0 +1,27 @@
+# Dockerfile for HF Spaces (CPU-only) + Replicate API
+# Mye lettere enn GPU-versjonen!
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies
+COPY requirements_replicate.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# App files
+COPY app_replicate.py app.py
+COPY text_cleaner.py .
+COPY timeline_fisker.txt .
+COPY static/ static/
+
+# Port for HF Spaces
+EXPOSE 7860
+
+# Start
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
