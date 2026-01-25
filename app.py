@@ -885,7 +885,6 @@ async def api_chat(req: Request):
         # Udtræk kun nøgleord fra sidste svar (ikke hele teksten)
         last_response = history[-1].get("content", "") if history[-1].get("role") == "assistant" else ""
         # Find navne og fagtermer (ord med stort begyndelsesbogstav eller over 6 tegn)
-        import re
         keywords = re.findall(r'\b[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)?\b', last_response)
         keywords = list(set(keywords))[:5]  # Max 5 unikke nøgleord
         if keywords:
