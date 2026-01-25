@@ -35,7 +35,7 @@ try:
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
-    print("⚠️ google-generativeai ikke installert - kjører uten Gemini")
+    print("⚠️ google-generativeai ikke installeret - kører uden Gemini")
 
 try:
     from text_cleaner import clean_text
@@ -55,7 +55,7 @@ if HF_TOKEN:
     except Exception as e:
         print(f"⚠️ Hugging Face Login feil: {e}")
 
-# v10.13: Gemini konfigurasjon
+# v10.13: Gemini konfiguration
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 gemini_model = None
 if GEMINI_AVAILABLE and GOOGLE_API_KEY:
@@ -64,7 +64,7 @@ if GEMINI_AVAILABLE and GOOGLE_API_KEY:
         gemini_model = genai.GenerativeModel('gemini-2.0-flash')
         print("✅ Gemini 2.0 Flash konfigurert for faktaekstraksjon")
     except Exception as e:
-        print(f"⚠️ Gemini konfigurasjon feilet: {e}")
+        print(f"⚠️ Gemini konfiguration fejlede: {e}")
 else:
     print("⚠️ Gemini ikke tilgjengelig - kjører kun med Mistral+LoRA")
 
@@ -132,9 +132,9 @@ def load_model_logic():
     LORA = "anvold/fisker-lora-clean"
     
     if USE_MIXTRAL:
-        print(f"🧩 Laster Mixtral 8x7B (uten LoRA) …")
+        print(f"🧩 Indlæser Mixtral 8x7B (uden LoRA) …")
     else:
-        print(f"🧩 Laster Mistral 7B + LoRA-adapter …")
+        print(f"🧩 Indlæser Mistral 7B + LoRA-adapter …")
     
     # LoRA adapter fix (kun for Mistral 7B)
     if not USE_MIXTRAL:
@@ -183,13 +183,13 @@ def load_model_logic():
         device_map="auto",
     )
 
-    print("🎙️ Laster TTS …")
+    print("🎙️ Indlæser TTS …")
     try:
         from transformers import pipeline as hf_pipeline_tool
         tts = hf_pipeline_tool("text-to-speech", model="espnet/kan-bayashi_ljspeech_vits")
         print("✅ TTS klar.")
     except Exception as e:
-        print(f"⚠️ TTS feilet: {e}")
+        print(f"⚠️ TTS fejlede: {e}")
 
     print("🧠 Kobler til Pinecone …")
     if PINECONE_API_KEY:
@@ -335,7 +335,7 @@ def extract_most_relevant_excerpt(source_text: str, response_text: str, min_word
             "excerpt": source_text[:200] if len(source_text) > 200 else source_text,
             "relevance": 0.0,
             "method": "fallback",
-            "explanation": "Ingen semantisk analyse tilgjengelig"
+            "explanation": "Ingen semantisk analyse tilgængelig"
         }
     
     sentences = re.split(r'(?<=[.!?])\s+', source_text)
@@ -455,7 +455,7 @@ def detect_discursive_shifts(strata: list) -> dict:
         )
         
         if distance > 0.35:
-            # v10.11: Ekstraher nøkkelord som viser HVA som endret seg
+            # v10.11: Udtræk nøgleord som viser HVAD der ændrede sig
             text_a = sorted_strata[i]["text"].lower()
             text_b = sorted_strata[i+1]["text"].lower()
             
@@ -697,7 +697,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
         if avg_attribution > 0.70 and high_conf_count >= 2:
             overall_level = "ARKIVFAKTA"
         elif avg_attribution > 0.58 and high_conf_count >= 1:
-            overall_level = "ARKIV-NÆR TOLKNING"
+            overall_level = "ARKIVNÆR FORTOLKNING"
         else:
             overall_level = "PRAKSISBASERT SYNTESE"
         
@@ -720,7 +720,7 @@ def analyze_source_relations(strata: list, response_text: str, query: str) -> di
 
 def perform_full_genealogical_analysis(strata: list, response_text: str, query: str) -> dict:
     """Kombinert analyse"""
-    print("\n🔬 Utfører genealogisk-epistemisk analyse...")
+    print("\n🔬 Udfører genealogisk-epistemisk analyse...")
     
     epistemic_analysis = analyze_source_relations(strata, response_text, query)
     
@@ -885,7 +885,7 @@ async def api_chat(req: Request):
     if not matches:
         return JSONResponse({
             "error": "Ingen kilder funnet",
-            "text": "Beklager, jeg kan ikke svare uten arkivet.",
+            "text": "Beklager, jeg kan ikke svare uden arkivet.",
             "strata": [],
             "visuals": [],
             "state": "FRAKOBLET",
@@ -896,7 +896,7 @@ async def api_chat(req: Request):
     
     # =====================================================
     # v10.14: GEMINI SOM ASSISTENT, IKKE PORTVAKT
-    # Begge modeller ser kildene - Gemini hjelper med fokus
+    # Begge modeller ser kildene - Gemini hjælper med fokus
     # =====================================================
     
     # Bygg kilde-kontekst
@@ -922,31 +922,31 @@ async def api_chat(req: Request):
     context = "\n\n".join(source_lines)
     
     # =====================================================
-    # TRINN 1: GEMINI LAGER FAKTA-HINT (valgfritt hjelpemiddel)
+    # TRINN 1: GEMINI LAGER FAKTA-HINT (valgfrit hjælpemiddel)
     # =====================================================
     gemini_summary = ""
     if gemini_model:
         try:
-            gemini_prompt = f"""Les disse kildene og finn Kay Fiskers VURDERINGER og HOLDNINGER relevant for spørsmålet.
+            gemini_prompt = f"""Læs disse kilder og find Kay Fiskers VURDERINGER og HOLDNINGER relevant for spørgsmålet.
 
 KILDER:
 {context}
 
-SPØRSMÅL: {user_prompt}
+SPØRGSMÅL: {user_prompt}
 
-List 3-5 punkter. Fokuser på:
+Svar på dansk. List 3-5 punkter. Fokusér på:
 - Fiskers personlige vurderinger ("forekommer mig", "det fineste exempel", "jeg finder")
-- Konkrete sammenligninger han gjør mellom bygninger/arkitekter
-- Hans sosiale/ideologiske synspunkter på arkitektur
-- Spesifikke bygninger han nevner med årstall
+- Konkrete sammenligninger han laver mellem bygninger/arkitekter
+- Hans sociale/ideologiske synspunkter på arkitektur
+- Specifikke bygninger han nævner med årstal
 
-IKKE list tekniske detaljer som etasjer, materialer, priser med mindre de er del av en vurdering."""
+List IKKE tekniske detaljer som etager, materialer, priser medmindre de er del af en vurdering."""
 
             response = gemini_model.generate_content(gemini_prompt)
             gemini_summary = response.text.strip()
             print(f"   ✅ Gemini-hint: {gemini_summary[:100]}...")
         except Exception as e:
-            print(f"   ⚠️ Gemini feilet (fortsetter uten): {e}")
+            print(f"   ⚠️ Gemini fejlede (fortsætter uden): {e}")
             gemini_summary = ""
     
     # =====================================================
@@ -954,13 +954,13 @@ IKKE list tekniske detaljer som etasjer, materialer, priser med mindre de er del
     # Arkitektur fra v10.14 + struktur fra v10.6
     # =====================================================
     
-    # Bygg hint-seksjon hvis Gemini ga noe
+    # Bygg hint-sektion hvis Gemini gav noget
     hint_section = ""
     if gemini_summary:
         hint_section = f"""
-### NØKKELFAKTA (fra analyse) ###
+### NØGLEPUNKTER (fra kilderne) ###
 {gemini_summary}
-### SLUT NØKKELFAKTA ###
+### SLUT NØGLEPUNKTER ###
 """
     
     lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
@@ -997,11 +997,11 @@ Spørgsmål: {user_prompt}
 
 Kay Fisker:"""
     
-    # Generer med LoRA
+    # Generér med LoRA
     result = pipe(
         lora_prompt,
         max_new_tokens=400,
-        temperature=0.40,  # Litt høyere for mer personlighet
+        temperature=0.40,
         top_p=0.88,
         top_k=45,
         repetition_penalty=1.22,
@@ -1053,7 +1053,7 @@ Kay Fisker:"""
     
     visuals = extract_visuals(generated_text)
     
-    epistemic_level = genealogy.get("epistemic_levels", {}).get("primary_level", "FRIKSJON")
+    epistemic_level = genealogy.get("epistemic_levels", {}).get("primary_level", "FRIKTION")
     has_major_shifts = len([s for s in genealogy.get("discursive_shifts", {}).get("shifts", []) if s.get("type") == "MAJOR_SHIFT"]) > 0
     
     if visuals:
@@ -1062,8 +1062,8 @@ Kay Fisker:"""
         state = "DISKURSIVT_BRUDD"
     elif epistemic_level == "ARKIVFAKTA":
         state = "ARKIV-DIREKTE"
-    elif epistemic_level == "ARKIV-NÆR TOLKNING":
-        state = "TOLKNING"
+    elif epistemic_level == "ARKIVNÆR FORTOLKNING":
+        state = "FORTOLKNING"
     else:
         state = "SYNTESE"
     
