@@ -51,6 +51,7 @@
             
             const [selectedConcept, setSelectedConcept] = useState(null);
             const [showGenealogy, setShowGenealogy] = useState(false);
+            const [conversationHistory, setConversationHistory] = useState([]); // NY: Samtalehistorik
             
             const [viewport, setViewport] = useState({ 
                 w: typeof window !== 'undefined' ? window.innerWidth : 1200, 
@@ -180,7 +181,10 @@
                     const response = await fetch('/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: prompt })
+                        body: JSON.stringify({ 
+                            message: prompt,
+                            history: conversationHistory  // NY: Send historik med
+                        })
                     });
                     
                     if (!response.ok) {
@@ -212,7 +216,15 @@
                     setIntensity(data.intensity || 0.8);
                     setGenealogy(data.genealogy || null);
                     setSelectedSources([]);
-                    addLog(`Genealogi etableret.`);
+                    
+                    // NY: Opdater samtalehistorik
+                    setConversationHistory(prev => [
+                        ...prev,
+                        { role: "user", content: prompt },
+                        { role: "assistant", content: data.text || "" }
+                    ]);
+                    
+                    addLog(`Genealogi etableret. (${conversationHistory.length/2 + 1} udvekslinger)`);
                 } catch (error) {
                     addLog(`Fejl: ${error.message}`);
                 } finally {
@@ -386,6 +398,7 @@
                 setSelectedSources([]);
                 setSelectedConcept(null);
                 setHoveredSource(null);
+                setConversationHistory([]);  // NY: Nulstil samtalehistorik
             };
 
             useEffect(() => {
@@ -1260,9 +1273,16 @@
                                         {renderResponseWithVisuals(syntheticResponse)}
                                     </div>
                                     <div className="mt-6 flex justify-between items-center text-[9px] mono text-stone-500">
-                                        <span>v.10.15</span>
+                                        <div className="flex items-center gap-3">
+                                            <span>v.10.15</span>
+                                            {conversationHistory.length > 0 && (
+                                                <span className="px-2 py-0.5 bg-sky-100 text-sky-700 rounded-full">
+                                                    {Math.floor(conversationHistory.length / 2)} udvekslinger
+                                                </span>
+                                            )}
+                                        </div>
                                         <button onClick={resetAll} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full">
-                                            <LucideIcon name="refresh-cw" size={12} /> RENS
+                                            <LucideIcon name="refresh-cw" size={12} /> NY SAMTALE
                                         </button>
                                     </div>
                                 </div>
