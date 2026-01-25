@@ -882,11 +882,17 @@ async def api_chat(req: Request):
     # NY: Byg søgeforespørgsel der inkluderer kontekst fra historik
     search_query = user_prompt
     if history and len(history) >= 2:
-        # Tag sidste udveksling med for bedre søgning
-        last_exchange = history[-2:]  # sidste spørgsmål + svar
-        context_hint = " ".join([h.get("content", "")[:100] for h in last_exchange])
-        search_query = f"{user_prompt} {context_hint}"
-        print(f"   🔄 Samtale-kontekst: {len(history)} tidligere beskeder")
+        # Udtræk kun nøgleord fra sidste svar (ikke hele teksten)
+        last_response = history[-1].get("content", "") if history[-1].get("role") == "assistant" else ""
+        # Find navne og fagtermer (ord med stort begyndelsesbogstav eller over 6 tegn)
+        import re
+        keywords = re.findall(r'\b[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)?\b', last_response)
+        keywords = list(set(keywords))[:5]  # Max 5 unikke nøgleord
+        if keywords:
+            search_query = f"{user_prompt} {' '.join(keywords)}"
+            print(f"   🔄 Samtale-kontekst: {len(history)} beskeder, nøgleord: {keywords}")
+        else:
+            print(f"   🔄 Samtale-kontekst: {len(history)} beskeder")
     
     matches = pinecone_search_logic(search_query, total_results=8)
     
