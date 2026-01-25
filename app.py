@@ -435,82 +435,77 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
 # --- GENEALOGISK ANALYSE ---
 
 def detect_discursive_shifts(strata: list) -> dict:
-    """Detekterer diskursive brudd over tid"""
-    if not embedder or len(strata) < 3:
-        return {"shifts": [], "periods": []}
+    """
+    Analyserer kilder over tid - viser tidslinje og kun ægte diskursive skift.
+    Et ægte skift kræver: samme emne, men ændret holdning/terminologi.
+    """
+    if not embedder or len(strata) < 2:
+        return {"timeline": [], "thematic_shifts": [], "source_overview": []}
     
     sorted_strata = sorted([s for s in strata if s.get("year")], key=lambda x: int(x["year"]))
     
-    if len(sorted_strata) < 3:
-        return {"shifts": [], "periods": []}
+    if len(sorted_strata) < 2:
+        return {"timeline": [], "thematic_shifts": [], "source_overview": []}
     
-    texts = [s["text"] for s in sorted_strata]
-    embeddings = embedder.encode(texts, convert_to_tensor=True)
+    # 1. TIDSLINJE: Simpel oversigt over kilder over tid (uden "brud"-terminologi)
+    timeline = []
+    for s in sorted_strata:
+        timeline.append({
+            "year": s["year"],
+            "source": s["ref"],
+            "title": s.get("title", "Ukendt"),
+            "type": "PRIMÆR" if "Kay Fisker" in s["ref"] and int(s["year"]) <= 1965 else "SEKUNDÆR"
+        })
     
-    shifts = []
-    for i in range(len(sorted_strata) - 1):
-        distance = cosine(
-            embeddings[i].cpu().numpy(),
-            embeddings[i+1].cpu().numpy()
-        )
+    # 2. TEMATISKE SKIFT: Kun når samme emneord optræder med forskellige kontekster
+    # Dette er mere meningsfuldt end blot at sammenligne alle tekster
+    thematic_shifts = []
+    
+    # Find nøgleord der optræder i flere kilder
+    all_texts = [(s["year"], s["text"].lower(), s["ref"]) for s in sorted_strata]
+    
+    # Arkitektur-relevante termer at spore
+    key_terms = ["rækkehus", "etage", "funktionel", "modernisme", "tradition", 
+                 "bolig", "arbejder", "social", "form", "materiale"]
+    
+    for term in key_terms:
+        occurrences = []
+        for year, text, ref in all_texts:
+            if term in text:
+                # Find kontekst omkring termen
+                idx = text.find(term)
+                context = text[max(0, idx-50):min(len(text), idx+50)]
+                occurrences.append({
+                    "year": year,
+                    "source": ref,
+                    "context": context.strip()
+                })
         
-        if distance > 0.35:
-            # v10.11: Udtræk nøgleord som viser HVAD der ændrede sig
-            text_a = sorted_strata[i]["text"].lower()
-            text_b = sorted_strata[i+1]["text"].lower()
-            
-            # Finn ord som er unike for hver tekst
-            words_a = set(text_a.split())
-            words_b = set(text_b.split())
-            unique_to_a = [w for w in words_a - words_b if len(w) > 5][:3]
-            unique_to_b = [w for w in words_b - words_a if len(w) > 5][:3]
-            
-            # Beskriv bruddet
-            if distance > 0.5:
-                description = f"Markant skifte i diskurs: fra fokus på {', '.join(unique_to_a) if unique_to_a else 'tidligere temaer'} til {', '.join(unique_to_b) if unique_to_b else 'nye temaer'}"
-            else:
-                description = f"Gradvis endring i terminologi og fokus"
-            
-            shifts.append({
-                "year_from": sorted_strata[i]["year"],
-                "year_to": sorted_strata[i+1]["year"],
-                "distance": float(distance),
-                "type": "MAJOR_SHIFT" if distance > 0.5 else "MINOR_SHIFT",
-                "source_a": sorted_strata[i]["ref"],
-                "source_b": sorted_strata[i+1]["ref"],
-                # NY: Forklaring av hva bruddet handler om
-                "description": description,
-                "keywords_before": unique_to_a,
-                "keywords_after": unique_to_b
-            })
+        # Kun interessant hvis termen optræder i flere år
+        if len(occurrences) >= 2:
+            years = [o["year"] for o in occurrences]
+            if len(set(years)) >= 2:  # Forskellige år
+                thematic_shifts.append({
+                    "term": term,
+                    "occurrences": occurrences,
+                    "span": f"{min(years)}-{max(years)}"
+                })
     
-    if len(embeddings) >= 3:
-        clustering = DBSCAN(eps=0.3, min_samples=2, metric='cosine')
-        labels = clustering.fit_predict(embeddings.cpu().numpy())
-        
-        periods = []
-        for label in set(labels):
-            if label == -1:
-                continue
-            indices = [i for i, l in enumerate(labels) if l == label]
-            period_strata = [sorted_strata[i] for i in indices]
-            years = [int(s["year"]) for s in period_strata]
-            
-            periods.append({
-                "period_id": int(label),
-                "year_range": f"{min(years)}-{max(years)}",
-                "source_count": len(period_strata),
-                "sources": [s["ref"] for s in period_strata],
-                "coherence": "HIGH"
-            })
-    else:
-        periods = []
+    # 3. KILDEOVERSIGT: Grupperet efter periode
+    source_overview = {
+        "total": len(sorted_strata),
+        "span": f"{sorted_strata[0]['year']}-{sorted_strata[-1]['year']}" if sorted_strata else None,
+        "primary_count": len([s for s in sorted_strata if int(s["year"]) <= 1965]),
+        "secondary_count": len([s for s in sorted_strata if int(s["year"]) > 1965])
+    }
     
     return {
-        "shifts": shifts,
-        "periods": periods,
-        "total_sources": len(sorted_strata),
-        "temporal_span": f"{sorted_strata[0]['year']}-{sorted_strata[-1]['year']}" if sorted_strata else None
+        "timeline": timeline,
+        "thematic_shifts": thematic_shifts[:5],  # Max 5 mest relevante
+        "source_overview": source_overview,
+        # Behold for bagudkompatibilitet, men tom
+        "shifts": [],
+        "periods": []
     }
 
 def trace_concept_genealogy(strata: list, concept: str) -> dict:
@@ -746,22 +741,25 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
             "decade_distribution": dict(Counter([y // 10 * 10 for y in years]))
         }
     
-    if genealogical_analysis["discursive_shifts"]["shifts"]:
-        major_shifts = [s for s in genealogical_analysis["discursive_shifts"]["shifts"] if s["type"] == "MAJOR_SHIFT"]
-        genealogical_analysis["discontinuities"] = [{
-            "year": shift["year_to"],
-            "description": f"Major break {shift['year_from']}-{shift['year_to']}",
-            "magnitude": shift["distance"]
-        } for shift in major_shifts]
+    # Ny struktur: timeline og thematic_shifts i stedet for "shifts/brud"
+    discursive = genealogical_analysis["discursive_shifts"]
+    if discursive.get("thematic_shifts"):
+        genealogical_analysis["thematic_continuities"] = [{
+            "term": ts["term"],
+            "span": ts["span"],
+            "occurrences": len(ts["occurrences"])
+        } for ts in discursive["thematic_shifts"]]
     
     combined = {
         **epistemic_analysis,
         **genealogical_analysis
     }
     
-    print(f"   ✅ Epistemisk nivå: {epistemic_analysis['epistemic_levels'].get('primary_level', 'N/A')}")
-    print(f"   ✅ {len(genealogical_analysis['concept_genealogies'])} begrepsgeneaologier")
-    print(f"   ✅ {len(genealogical_analysis['discursive_shifts']['shifts'])} skift")
+    print(f"   ✅ Epistemisk niveau: {epistemic_analysis['epistemic_levels'].get('primary_level', 'N/A')}")
+    print(f"   ✅ {len(genealogical_analysis['concept_genealogies'])} begrebsgeneaologier")
+    timeline_count = len(discursive.get("timeline", []))
+    thematic_count = len(discursive.get("thematic_shifts", []))
+    print(f"   ✅ Tidslinje: {timeline_count} kilder, {thematic_count} tematiske spor")
     
     return combined
 
@@ -1054,12 +1052,12 @@ Kay Fisker:"""
     visuals = extract_visuals(generated_text)
     
     epistemic_level = genealogy.get("epistemic_levels", {}).get("primary_level", "FRIKTION")
-    has_major_shifts = len([s for s in genealogy.get("discursive_shifts", {}).get("shifts", []) if s.get("type") == "MAJOR_SHIFT"]) > 0
+    has_thematic_traces = len(genealogy.get("discursive_shifts", {}).get("thematic_shifts", [])) > 0
     
     if visuals:
         state = "VISUEL_AKKUMULERING"
-    elif has_major_shifts:
-        state = "DISKURSIVT_BRUDD"
+    elif has_thematic_traces:
+        state = "TEMATISK_SPORING"
     elif epistemic_level == "ARKIVFAKTA":
         state = "ARKIV-DIREKTE"
     elif epistemic_level == "ARKIVNÆR FORTOLKNING":
