@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Genealogisk Apparat v.10.11</title>
+    <title>Fisker / Genealogisk Apparat v.10.15</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -168,7 +168,7 @@
                 if (isSynthesizing) return;
                 const prompt = text || documentText;
                 if (!prompt || prompt.trim().length < 3) {
-                    addLog("Spørsmål for kort");
+                    addLog("Spørgsmål for kort");
                     return;
                 }
                 
@@ -230,7 +230,7 @@
                 const pos = getSmartPosition(1960, visualNodes);
                 const newNode = { ...visual, id: `vis-${Date.now()}`, pos: pos };
                 setVisualNodes(prev => [...prev, newNode]);
-                addLog(`Projiserer: ${visual.keyword}`);
+                addLog(`Projicerer: ${visual.keyword}`);
             };
 
             const renderResponseWithVisuals = (text) => {
@@ -252,7 +252,7 @@
                                         ? 'border-blue-500 text-blue-700 bg-blue-50' 
                                         : 'border-dashed border-gray-400 text-gray-700 hover:border-blue-400 hover:bg-blue-50/50'
                                 }`}
-                                title="Klik for å projisere bilde">
+                                title="Klik for at projicere billede">
                                 <LucideIcon name="image" size={14} className="inline mr-1 mb-0.5 opacity-50" />
                                 {part}
                             </span>
@@ -477,41 +477,27 @@
                 return () => clearInterval(simulationLoop);
             }, [draggedNode, activeStrata.length]);
 
-            const renderDiscursiveShifts = () => {
-                if (!genealogy?.discursive_shifts?.shifts) return null;
-                return genealogy.discursive_shifts.shifts.map((shift, i) => {
-                    const sourceA = activeStrata.find(s => s.ref === shift.source_a);
-                    const sourceB = activeStrata.find(s => s.ref === shift.source_b);
-                    if (!sourceA || !sourceB) return null;
-                    
-                    const isMajor = shift.type === "MAJOR_SHIFT";
-                    const strokeColor = isMajor ? "#44403c" : "#78716c";
-                    const strokeWidth = isMajor ? 3 : 2;
-                    
-                    const midX = (sourceA.pos.x + sourceB.pos.x) / 2;
-                    const midY = (sourceA.pos.y + sourceB.pos.y) / 2;
+            // v10.15: Render tidslinje (erstatter renderDiscursiveShifts)
+            const renderTimeline = () => {
+                const timeline = genealogy?.discursive_shifts?.timeline;
+                if (!timeline || timeline.length === 0) return null;
+                
+                // Tegn linjer mellem kilder i kronologisk rækkefølge
+                const sortedSources = [...activeStrata].sort((a, b) => (parseInt(a.year) || 0) - (parseInt(b.year) || 0));
+                
+                return sortedSources.map((source, i) => {
+                    if (i === 0) return null;
+                    const prev = sortedSources[i - 1];
                     
                     return (
-                        <g key={`shift-${i}`}>
+                        <g key={`timeline-${i}`}>
                             <line 
-                                x1={`${sourceA.pos.x}%`} y1={`${sourceA.pos.y}%`}
-                                x2={`${sourceB.pos.x}%`} y2={`${sourceB.pos.y}%`}
-                                stroke={strokeColor} strokeWidth={strokeWidth}
-                                strokeDasharray={isMajor ? "10,5" : "6,3"} 
-                                opacity="0.7"
-                                className={isMajor ? "animate-pulse" : ""}
+                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
+                                x2={`${source.pos.x}%`} y2={`${source.pos.y}%`}
+                                stroke="#a8a29e" strokeWidth="1"
+                                strokeDasharray="4,4" 
+                                opacity="0.4"
                             />
-                            <circle 
-                                cx={`${midX}%`} cy={`${midY}%`} r="4"
-                                fill={strokeColor} opacity="0.8"
-                            />
-                            <text 
-                                x={`${midX}%`} y={`${midY - 1}%`}
-                                className="text-[9px] fill-white font-mono font-black"
-                                textAnchor="middle"
-                                style={{ paintOrder: 'stroke', stroke: strokeColor, strokeWidth: 3 }}>
-                                {isMajor ? 'BRUDD' : 'skift'}
-                            </text>
                         </g>
                     );
                 });
@@ -567,6 +553,33 @@
                             <circle 
                                 cx={`${midX}%`} cy={`${midY}%`} r="2.5"
                                 fill="#0ea5e9" opacity="0.6"
+                            />
+                        </g>
+                    );
+                });
+            };
+
+            // v10.15: Render tematiske forbindelser
+            const renderThematicConnections = () => {
+                if (!selectedConcept) return null;
+                const thematic = genealogy?.discursive_shifts?.thematic_shifts?.find(t => t.term === selectedConcept);
+                if (!thematic) return null;
+                
+                const connectedSources = thematic.occurrences
+                    .map(o => activeStrata.find(s => s.ref === o.source))
+                    .filter(Boolean);
+                
+                return connectedSources.map((node, i) => {
+                    if (i === 0) return null;
+                    const prev = connectedSources[i - 1];
+                    
+                    return (
+                        <g key={`thematic-${i}`}>
+                            <line 
+                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
+                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
+                                stroke="#10b981" strokeWidth="2"
+                                strokeDasharray="8,4" opacity="0.5"
                             />
                         </g>
                     );
@@ -640,7 +653,7 @@
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
                                 <div className="w-5 h-5 bg-[#e32219] flex items-center justify-center text-white font-black text-[10px]">F</div>
-                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.11</h1>
+                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.15</h1>
                             </div>
                             <span className={`text-[10px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-blue-500 animate-pulse' : 'text-gray-400'}`}>{discursiveState}</span>
                             
@@ -648,7 +661,7 @@
                                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-100/80">
                                     <span className={`text-[9px] mono font-medium tracking-wide ${
                                         genealogy.epistemic_levels.primary_level === 'ARKIVFAKTA' ? 'text-emerald-700' :
-                                        genealogy.epistemic_levels.primary_level === 'ARKIV-NÆR TOLKNING' ? 'text-sky-700' :
+                                        genealogy.epistemic_levels.primary_level === 'ARKIVNÆR FORTOLKNING' ? 'text-sky-700' :
                                         'text-amber-700'
                                     }`}>
                                         {genealogy.epistemic_levels.primary_level}
@@ -663,12 +676,13 @@
                                 className={`px-3 py-1.5 rounded-full text-[9px] mono font-medium tracking-wide transition-all ${
                                     showGenealogy ? 'bg-stone-700 text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                                 }`}>
-                                Genealogi
+                                Tidslinje
                             </button>
                             
-                            {genealogy?.discursive_shifts && (
+                            {/* v10.15: Viser kildeoversigt i stedet for "brudd" */}
+                            {genealogy?.discursive_shifts?.source_overview && (
                                 <span className="text-[9px] mono text-stone-500">
-                                    {genealogy.discursive_shifts.shifts.length} brudd
+                                    {genealogy.discursive_shifts.source_overview.primary_count || 0} primære / {genealogy.discursive_shifts.source_overview.secondary_count || 0} sekundære
                                 </span>
                             )}
                         </div>
@@ -699,7 +713,8 @@
 
                         <svg className="absolute inset-0 w-full h-full pointer-events-none z-5" 
                             style={{ filter: showGenealogy ? 'none' : 'blur(2px) opacity(0.3)' }}>
-                            {renderDiscursiveShifts()}
+                            {renderTimeline()}
+                            {renderThematicConnections()}
                             {renderConceptConnections()}
                         </svg>
 
@@ -733,15 +748,15 @@
                                 const isDragging = draggedNode === s.id;
                                 
                                 const isInGenealogy = showGenealogy && (
-                                    genealogy?.discursive_shifts?.shifts?.some(shift => 
-                                        shift.source_a === s.ref || shift.source_b === s.ref
-                                    ) ||
                                     (selectedConcept && genealogy?.concept_genealogies?.[selectedConcept]?.occurrences?.some(
                                         occ => occ.source_id === s.id
+                                    )) ||
+                                    (selectedConcept && genealogy?.discursive_shifts?.thematic_shifts?.find(t => t.term === selectedConcept)?.occurrences?.some(
+                                        occ => occ.source === s.ref
                                     ))
                                 );
                                 
-                                const isDimmed = (selectedSources.length > 0 && !isSelected) || (showGenealogy && !isInGenealogy && !isSelected);
+                                const isDimmed = (selectedSources.length > 0 && !isSelected) || (showGenealogy && selectedConcept && !isInGenealogy && !isSelected);
                                 const attribution = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                 const hasAttribution = attribution && attribution.segments && attribution.segments.length > 0;
                                 
@@ -769,12 +784,11 @@
                                                 {s.type}
                                             </span>
                                             <div className="flex items-center gap-2">
-                                                {hasAttribution && <div className="w-2 h-2 rounded-full bg-sky-500" title="Brukt i svar"></div>}
+                                                {hasAttribution && <div className="w-2 h-2 rounded-full bg-sky-500" title="Brugt i svar"></div>}
                                                 {isSelected && <LucideIcon name="check-circle" size={14} className="text-green-600" />}
                                                 <span className="text-[10px] mono text-gray-400">#{s.year || '?'}</span>
                                             </div>
                                         </div>
-                                        {/* v10.11: Vis tittel */}
                                         {s.title && (
                                             <div className="text-[10px] font-medium text-stone-600 mb-2 truncate" title={s.title}>
                                                 {s.title}
@@ -824,14 +838,14 @@
                         </div>
                     )}
 
-                    {/* v10.11: FORBEDRET SIDEBAR MED FULL METADATA */}
+                    {/* v10.15: SIDEBAR MED TIDSLINJE OG TEMATIK */}
                     {(selectedSources.length > 0 || showGenealogy) && (
                         <aside className="fixed right-0 top-12 bottom-0 w-[520px] bg-white/70 backdrop-blur-xl border-l border-white/40 z-40 overflow-y-auto flex flex-col shadow-2xl">
                             <header className="p-6 border-b border-white/40 sticky top-0 z-10 backdrop-blur-xl bg-white/80">
                                 <div className="flex justify-between items-center mb-3">
                                     <div>
                                         <h2 className="text-[13px] font-bold text-stone-800 mb-1">
-                                            {showGenealogy ? "Genealogisk Analyse" : "Arbejdsbord"}
+                                            {showGenealogy ? "Tidslinje & Tematik" : "Arbejdsbord"}
                                         </h2>
                                         {selectedSources.length > 0 && (
                                             <p className="text-[10px] mono text-stone-500">
@@ -845,28 +859,35 @@
                                     </button>
                                 </div>
                                 
-                                {genealogy?.concept_genealogies && Object.keys(genealogy.concept_genealogies).length > 0 && (
+                                {/* v10.15: Tematisk sporing - kombinerer concept_genealogies og thematic_shifts */}
+                                {(genealogy?.concept_genealogies && Object.keys(genealogy.concept_genealogies).length > 0) || 
+                                 (genealogy?.discursive_shifts?.thematic_shifts?.length > 0) ? (
                                     <div className="mt-4">
                                         <label className="text-[10px] mono font-medium text-stone-600 mb-2 block">
-                                            Spor begrep
+                                            Spor begreb
                                         </label>
                                         <select 
                                             value={selectedConcept || ""}
                                             onChange={(e) => setSelectedConcept(e.target.value || null)}
                                             className="w-full text-[11px] mono p-2 border border-stone-300 rounded bg-white">
-                                            <option value="">-- Velg begrep --</option>
-                                            {Object.keys(genealogy.concept_genealogies).map(concept => (
+                                            <option value="">-- Vælg begreb --</option>
+                                            {genealogy?.concept_genealogies && Object.keys(genealogy.concept_genealogies).map(concept => (
                                                 <option key={concept} value={concept}>
                                                     {concept} ({genealogy.concept_genealogies[concept].total_occurrences})
                                                 </option>
                                             ))}
+                                            {genealogy?.discursive_shifts?.thematic_shifts?.map(t => (
+                                                <option key={`theme-${t.term}`} value={t.term}>
+                                                    {t.term} ({t.span})
+                                                </option>
+                                            ))}
                                         </select>
                                     </div>
-                                )}
+                                ) : null}
                             </header>
                             
                             <div className="flex-grow overflow-y-auto p-6 space-y-6">
-                                {/* SELECTED SOURCES - v10.11: MER METADATA */}
+                                {/* SELECTED SOURCES */}
                                 {selectedSources.length > 0 && selectedSources.map((s, i) => {
                                     const attr = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                     return (
@@ -874,9 +895,8 @@
                                             <div className="flex items-start justify-between">
                                                 <div>
                                                     <div className="text-[10px] mono font-medium text-stone-600 mb-1">{s.type}</div>
-                                                    {/* v10.11: FULL TITTEL */}
                                                     <div className="text-[13px] font-semibold text-stone-800 mb-1">
-                                                        {s.title || "Ukjent kilde"}
+                                                        {s.title || "Ukendt kilde"}
                                                     </div>
                                                     <div className="text-[11px] text-stone-600">
                                                         {s.author || "Kay Fisker"} ({s.year || '?'})
@@ -893,7 +913,6 @@
                                                 )}
                                             </div>
                                             
-                                            {/* v10.11: FORBEDRET METADATA-VISNING */}
                                             <div className="text-[10px] mono text-stone-500 space-y-1 pb-3 border-b border-stone-200 bg-stone-50/50 p-3 rounded">
                                                 <div className="flex justify-between">
                                                     <span className="text-stone-400">Kildetype:</span>
@@ -905,11 +924,11 @@
                                                 </div>
                                                 <div className="flex justify-between">
                                                     <span className="text-stone-400">År:</span>
-                                                    <span className="font-medium">{s.year || 'Ukjent'}</span>
+                                                    <span className="font-medium">{s.year || 'Ukendt'}</span>
                                                 </div>
                                                 {s.publication && (
                                                     <div className="flex justify-between">
-                                                        <span className="text-stone-400">Publikasjon:</span>
+                                                        <span className="text-stone-400">Publikation:</span>
                                                         <span className="font-medium">{s.publication}</span>
                                                     </div>
                                                 )}
@@ -927,7 +946,6 @@
                                                 )}
                                             </div>
                                             
-                                            {/* Brukte utdrag */}
                                             <div className="serif text-[15px] leading-relaxed text-stone-800">
                                                 {getHighlightedText(s.text, syntheticResponse, s.ref)}
                                             </div>
@@ -941,86 +959,41 @@
                                     );
                                 })}
                                 
-                                {/* GENEALOGICAL ANALYSIS - v10.11: MED FORKLARINGER */}
+                                {/* GENEALOGICAL ANALYSIS - v10.15 */}
                                 {showGenealogy && genealogy && (
                                     <>
-                                        {/* DISKURSIVE BRUDD - v10.11: FORKLARENDE */}
-                                        {genealogy.discursive_shifts?.shifts?.length > 0 && (
+                                        {/* v10.15: TIDSLINJE (erstatter "Diskursive brudd") */}
+                                        {genealogy.discursive_shifts?.timeline?.length > 0 && (
                                             <div className="space-y-4">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
                                                     <div className="w-1 h-4 bg-stone-700"></div>
-                                                    Diskursive brudd
+                                                    Kilder over tid
                                                 </h3>
                                                 
                                                 <div className="relative pl-8">
                                                     <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-stone-300"></div>
                                                     
-                                                    {genealogy.discursive_shifts.shifts.map((shift, i) => {
-                                                        const isMajor = shift.type === 'MAJOR_SHIFT';
+                                                    {genealogy.discursive_shifts.timeline.map((item, i) => {
+                                                        const isPrimary = item.type === 'PRIMÆR';
                                                         return (
-                                                            <div key={i} className="relative mb-6 last:mb-0">
-                                                                <div className={`absolute -left-5 top-2 w-4 h-4 rounded-full border-2 border-white ${
-                                                                    isMajor ? 'bg-stone-800' : 'bg-stone-500'
-                                                                } shadow-md`}></div>
+                                                            <div key={i} className="relative mb-4 last:mb-0">
+                                                                <div className={`absolute -left-5 top-2 w-3 h-3 rounded-full border-2 border-white ${
+                                                                    isPrimary ? 'bg-sky-600' : 'bg-stone-400'
+                                                                } shadow-sm`}></div>
                                                                 
-                                                                <div className={`bg-white/60 backdrop-blur-md p-4 rounded-sm border shadow-sm ${
-                                                                    isMajor ? 'border-stone-800/30 border-l-4' : 'border-stone-400/20 border-l-2'
-                                                                }`}>
-                                                                    <div className="flex items-baseline gap-2 mb-2">
-                                                                        <span className="text-[13px] font-bold text-stone-900 mono">
-                                                                            {shift.year_from}
+                                                                <div className="bg-white/60 backdrop-blur-md p-3 rounded-sm border border-stone-200/40 shadow-sm">
+                                                                    <div className="flex items-center gap-3 mb-1">
+                                                                        <span className="text-[12px] font-bold text-stone-900 mono">
+                                                                            {item.year}
                                                                         </span>
-                                                                        <svg className="w-4 h-4 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                                                                        </svg>
-                                                                        <span className="text-[13px] font-bold text-stone-900 mono">
-                                                                            {shift.year_to}
+                                                                        <span className={`text-[9px] px-2 py-0.5 rounded-full ${
+                                                                            isPrimary ? 'bg-sky-100 text-sky-700' : 'bg-stone-100 text-stone-600'
+                                                                        }`}>
+                                                                            {item.type}
                                                                         </span>
-                                                                        {isMajor && (
-                                                                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-stone-200 text-stone-800 font-bold mono">
-                                                                                MAJOR
-                                                                            </span>
-                                                                        )}
                                                                     </div>
-                                                                    
-                                                                    {/* v10.11: FORKLARING AV BRUDDET */}
-                                                                    {shift.description && (
-                                                                        <div className="text-[12px] text-stone-700 mb-3 italic serif">
-                                                                            {shift.description}
-                                                                        </div>
-                                                                    )}
-                                                                    
-                                                                    {/* v10.11: NØKKELORD FØR/ETTER */}
-                                                                    {(shift.keywords_before?.length > 0 || shift.keywords_after?.length > 0) && (
-                                                                        <div className="flex gap-4 text-[10px] mono mb-3">
-                                                                            {shift.keywords_before?.length > 0 && (
-                                                                                <div>
-                                                                                    <span className="text-stone-400">Før: </span>
-                                                                                    <span className="text-red-600">{shift.keywords_before.join(', ')}</span>
-                                                                                </div>
-                                                                            )}
-                                                                            {shift.keywords_after?.length > 0 && (
-                                                                                <div>
-                                                                                    <span className="text-stone-400">Efter: </span>
-                                                                                    <span className="text-emerald-600">{shift.keywords_after.join(', ')}</span>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    )}
-                                                                    
-                                                                    <div className="text-[11px] text-stone-600 serif italic">
-                                                                        {shift.source_a} ↔ {shift.source_b}
-                                                                    </div>
-                                                                    <div className="mt-2 flex items-center gap-2">
-                                                                        <div className="flex-1 h-1.5 bg-stone-200 rounded-full overflow-hidden">
-                                                                            <div 
-                                                                                className={`h-full ${isMajor ? 'bg-stone-800' : 'bg-stone-500'}`}
-                                                                                style={{ width: `${shift.distance * 100}%` }}
-                                                                            ></div>
-                                                                        </div>
-                                                                        <span className="text-[10px] mono text-stone-500">
-                                                                            {(shift.distance * 100).toFixed(0)}%
-                                                                        </span>
+                                                                    <div className="text-[11px] text-stone-600 truncate">
+                                                                        {item.title || item.source}
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -1030,7 +1003,46 @@
                                             </div>
                                         )}
                                         
-                                        {/* CONCEPT GENEALOGY */}
+                                        {/* v10.15: TEMATISKE SPOR */}
+                                        {selectedConcept && genealogy.discursive_shifts?.thematic_shifts && (
+                                            (() => {
+                                                const thematic = genealogy.discursive_shifts.thematic_shifts.find(t => t.term === selectedConcept);
+                                                if (!thematic) return null;
+                                                
+                                                return (
+                                                    <div className="space-y-4">
+                                                        <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
+                                                            <div className="w-1 h-4 bg-emerald-600"></div>
+                                                            <span className="serif italic">"{selectedConcept}"</span> over tid
+                                                        </h3>
+                                                        
+                                                        <div className="relative pl-8">
+                                                            <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-emerald-200"></div>
+                                                            
+                                                            {thematic.occurrences.map((occ, i) => (
+                                                                <div key={i} className="relative mb-4 last:mb-0">
+                                                                    <div className="absolute -left-5 top-2 w-3 h-3 rounded-full border-2 border-white bg-emerald-500 shadow-sm"></div>
+                                                                    
+                                                                    <div className="bg-white/60 backdrop-blur-md p-3 rounded-sm border border-emerald-200/40 shadow-sm">
+                                                                        <div className="text-[11px] font-bold text-emerald-900 mono mb-1">
+                                                                            {occ.year}
+                                                                        </div>
+                                                                        <p className="text-[12px] serif italic text-stone-700 leading-relaxed">
+                                                                            "...{occ.context}..."
+                                                                        </p>
+                                                                        <div className="text-[9px] text-stone-500 mt-2 mono">
+                                                                            {occ.source}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()
+                                        )}
+                                        
+                                        {/* CONCEPT GENEALOGY (beholdt fra v10.11) */}
                                         {selectedConcept && genealogy.concept_genealogies?.[selectedConcept] && (
                                             <div className="space-y-4">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -1063,7 +1075,7 @@
                                                 {genealogy.concept_genealogies[selectedConcept].semantic_drift?.length > 0 && (
                                                     <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-sky-200/40 shadow-sm">
                                                         <div className="text-[10px] font-bold text-sky-900 mono mb-3">
-                                                            Semantisk bevegelse
+                                                            Semantisk bevægelse
                                                         </div>
                                                         <div className="space-y-2">
                                                             {genealogy.concept_genealogies[selectedConcept].semantic_drift.map((drift, i) => (
@@ -1077,7 +1089,7 @@
                                                                         'bg-stone-800 text-white'
                                                                     }`}>
                                                                         {drift.interpretation === 'STABLE' ? 'Stabil' :
-                                                                         drift.interpretation === 'SHIFTING' ? 'Endring' : 'Radikalt'}
+                                                                         drift.interpretation === 'SHIFTING' ? 'Ændring' : 'Radikalt'}
                                                                     </div>
                                                                 </div>
                                                             ))}
@@ -1087,7 +1099,43 @@
                                             </div>
                                         )}
                                         
-                                        {/* KILDEFORDELING - v10.11: MED FORKLARING */}
+                                        {/* v10.15: KILDEOVERSIGT (erstatter power_knowledge delvist) */}
+                                        {genealogy.discursive_shifts?.source_overview && (
+                                            <div className="space-y-3">
+                                                <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
+                                                    <div className="w-1 h-4 bg-blue-500"></div>
+                                                    Kildeoversigt
+                                                </h3>
+                                                
+                                                <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-white/40 shadow-sm space-y-3">
+                                                    <div className="grid grid-cols-2 gap-4 text-center">
+                                                        <div className="p-3 bg-sky-50 rounded">
+                                                            <div className="text-[24px] font-bold text-sky-700">
+                                                                {genealogy.discursive_shifts.source_overview.primary_count || 0}
+                                                            </div>
+                                                            <div className="text-[10px] mono text-sky-600">Primære kilder</div>
+                                                        </div>
+                                                        <div className="p-3 bg-stone-50 rounded">
+                                                            <div className="text-[24px] font-bold text-stone-600">
+                                                                {genealogy.discursive_shifts.source_overview.secondary_count || 0}
+                                                            </div>
+                                                            <div className="text-[10px] mono text-stone-500">Sekundære kilder</div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {genealogy.discursive_shifts.source_overview.span && (
+                                                        <div className="pt-3 border-t border-stone-200 text-center">
+                                                            <div className="text-[10px] mono text-stone-500">Tidsrum</div>
+                                                            <div className="text-[14px] font-bold text-stone-800">
+                                                                {genealogy.discursive_shifts.source_overview.span}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* KILDEFORDELING (beholdt fra v10.11) */}
                                         {genealogy.power_knowledge && (
                                             <div className="space-y-3">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -1119,7 +1167,7 @@
                                                         
                                                         <div>
                                                             <div className="flex justify-between items-center mb-1">
-                                                                <span className="text-[10px] mono text-stone-600">Sitater</span>
+                                                                <span className="text-[10px] mono text-stone-600">Citater</span>
                                                                 <span className="text-[11px] font-bold text-amber-700 mono">
                                                                     {genealogy.power_knowledge.hierarchy.QUOTES}
                                                                 </span>
@@ -1158,9 +1206,8 @@
                                                         </div>
                                                     </div>
                                                     
-                                                    {/* v10.11: FORKLARENDE TEKST */}
                                                     <div className="pt-3 mt-3 border-t border-stone-200">
-                                                        <div className="text-[10px] mono text-stone-500 mb-1">Kildegrunnlag</div>
+                                                        <div className="text-[10px] mono text-stone-500 mb-1">Kildegrundlag</div>
                                                         <div className="text-[12px] font-medium text-stone-800">{genealogy.power_knowledge.dominant_discourse}</div>
                                                         {genealogy.power_knowledge.dominant_explanation && (
                                                             <div className="text-[11px] text-stone-600 mt-1 italic">
@@ -1195,14 +1242,14 @@
                                             onClick={handleTryAgain} 
                                             disabled={isSynthesizing}
                                             className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-amber-500/30">
-                                            <LucideIcon name="refresh-ccw" size={12} /> Prøv Igen
+                                            <LucideIcon name="refresh-ccw" size={12} /> Prøv igen
                                         </button>
                                     )}
                                     <button 
                                         onClick={handleSubmit} 
                                         disabled={isSynthesizing || !documentText.trim()} 
                                         className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/5 hover:bg-black/10 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-white/20">
-                                        <LucideIcon name="send" size={12} /> {isSynthesizing ? 'Analyserer...' : 'Genealogiser (⌘↵)'}
+                                        <LucideIcon name="send" size={12} /> {isSynthesizing ? 'Analyserer...' : 'Genealogisér (⌘↵)'}
                                     </button>
                                 </div>
                             </div>
@@ -1213,7 +1260,7 @@
                                         {renderResponseWithVisuals(syntheticResponse)}
                                     </div>
                                     <div className="mt-6 flex justify-between items-center text-[9px] mono text-stone-500">
-                                        <span>v.10.11</span>
+                                        <span>v.10.15</span>
                                         <button onClick={resetAll} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full">
                                             <LucideIcon name="refresh-cw" size={12} /> RENS
                                         </button>
@@ -1230,7 +1277,7 @@
                                 <span key={i} className="text-stone-400">[{log.time}] {log.msg}</span> 
                             ))}
                         </div>
-                        <span className="opacity-30">EPISTEMIC+GENEALOGICAL</span>
+                        <span className="opacity-30">TIDSLINJE+TEMATIK</span>
                     </footer>
                 </div>
             );
