@@ -1234,8 +1234,13 @@ Svar på dansk. List 3-5 punkter. Fokusér på:
     # Generer svar
     hint_section = f"\n### NØGLEPUNKTER ###\n{gemini_summary}\n### SLUT ###\n" if gemini_summary else ""
     
+    # Legg til tidsstempel for å unngå KV-cache
+    import random
+    cache_buster = f"[ts:{datetime.now().strftime('%H%M%S')}-{random.randint(1000,9999)}]"
+    
     lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
 Du svarer på dansk baseret på kildematerialet.
+{cache_buster}
 
 ### ARKIVKILDER ###
 {context}
@@ -1245,7 +1250,7 @@ KILDEPRIORITET:
 1. PRIMÆRE KILDER (dine egne skrifter før 1965) - brug disse FØRST
 2. Sekundære kilder (skrevet OM dig efter 1965) - kun for kontekst
 
-Svar på dansk i 3-5 sætninger. Vær konkret og vurderende.
+Svar på dansk i 3-5 sætninger. Vær konkret og vurderende. Varier din formulering.
 
 Spørgsmål: {user_prompt}
 
@@ -1545,8 +1550,13 @@ Svar på dansk. List 3-5 punkter."""
             history_lines.append(f"{role}: {content}")
         history_section = f"\n### TIDLIGERE I SAMTALEN ###\n{chr(10).join(history_lines)}\n### SLUT SAMTALE ###\n"
     
+    # Cache-busting for at undgå identiske svar
+    import random
+    cache_buster = f"[ts:{datetime.now().strftime('%H%M%S')}-{random.randint(1000,9999)}]"
+    
     lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
 Du svarer på dansk baseret på kildematerialet.
+{cache_buster}
 {history_section}
 ### ARKIVKILDER ###
 {context}
@@ -1566,6 +1576,7 @@ DIN STEMME:
 - Giv personlige vurderinger: "forekommer mig", "jeg finder", "det har moret mig"
 - Sammenlign konkrete eksempler: bygninger, arkitekter, årstal
 - Vær faglig men med holdning - du er professor, ikke leksikon
+- Varier din formulering - gentag ikke dig selv ordret
 {f"- Byg videre på det du lige har sagt, hvis spørgsmålet refererer til tidligere svar" if history else ""}
 
 FORBUDT:
