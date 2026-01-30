@@ -562,64 +562,82 @@ def analyze_response_composition(response_text: str, sources: list) -> dict:
     FORSKERMODUS: Analyserer hvilke deler av responsen som kommer fra hvilke kilder.
     """
     if not embedder:
-        return {"error": "Embedder ikke tilgjengelig"}
+        return {"error": "Embedder ikke tilgjengelig", "sentence_attributions": [], "total_sentences": 0, "high_confidence_attributions": 0}
     
     # Del opp responsen i setninger
     response_sentences = re.split(r'(?<=[.!?])\s+', response_text)
     response_sentences = [s.strip() for s in response_sentences if len(s.strip()) > 10]
     
     if not response_sentences:
-        return {"error": "Ingen setninger i respons"}
+        return {"error": "Ingen setninger i respons", "sentence_attributions": [], "total_sentences": 0, "high_confidence_attributions": 0}
     
     composition = []
     
     for sent_idx, sentence in enumerate(response_sentences):
-        sent_emb = embedder.encode(sentence, convert_to_tensor=True)
-        
-        best_source = None
-        best_score = 0
-        best_segment = None
-        
-        for source in sources:
-            source_text = source.get("text", "")
-            if not source_text:
-                continue
+        try:
+            sent_emb = embedder.encode(sentence, convert_to_tensor=True)
             
-            # Finn beste match i denne kilden
-            source_sentences = re.split(r'(?<=[.!?])\s+', source_text)
-            if not source_sentences:
-                continue
+            best_source = None
+            best_score = 0.0
+            best_segment = None
             
-            source_embs = embedder.encode(source_sentences, convert_to_tensor=True)
-            sims = util.cos_sim(sent_emb, source_embs)[0].cpu().numpy()
+            for source in sources:
+                # Støtt både "text" og "full_text" (forskermodus)
+                source_text = source.get("full_text") or source.get("text", "")
+                if not source_text or len(source_text) < 20:
+                    continue
+                
+                # Finn beste match i denne kilden
+                source_sentences = re.split(r'(?<=[.!?])\s+', source_text)
+                source_sentences = [s.strip() for s in source_sentences if len(s.strip()) > 10]
+                
+                if not source_sentences:
+                    continue
+                
+                try:
+                    source_embs = embedder.encode(source_sentences, convert_to_tensor=True)
+                    sims = util.cos_sim(sent_emb, source_embs)[0].cpu().numpy()
+                    
+                    max_sim_idx = int(np.argmax(sims))
+                    max_sim = float(sims[max_sim_idx])
+                    
+                    if max_sim > best_score:
+                        best_score = max_sim
+                        best_source = source
+                        best_segment = source_sentences[max_sim_idx]
+                except Exception as e:
+                    print(f"   ⚠️ Feil ved embedding av kilde: {e}")
+                    continue
             
-            max_sim_idx = int(np.argmax(sims))
-            max_sim = float(sims[max_sim_idx])
-            
-            if max_sim > best_score:
-                best_score = max_sim
-                best_source = source
-                best_segment = source_sentences[max_sim_idx]
-        
-        composition.append({
-            "sentence_index": sent_idx,
-            "response_sentence": sentence,
-            "best_matching_source": {
-                "title": best_source.get("title") if best_source else None,
-                "year": best_source.get("year") if best_source else None,
-                "type": best_source.get("type") if best_source else None,
-                "id": best_source.get("id") if best_source else None
-            },
-            "matching_segment": best_segment,
-            "similarity": best_score,
-            "attribution_confidence": (
-                "DIREKTE_KILDE" if best_score > 0.75 else
-                "STERK_INDIKASJON" if best_score > 0.60 else
-                "MODERAT_INDIKASJON" if best_score > 0.45 else
-                "SVAK_INDIKASJON" if best_score > 0.30 else
-                "INGEN_KLAR_KILDE"
-            )
-        })
+            composition.append({
+                "sentence_index": sent_idx,
+                "response_sentence": sentence,
+                "best_matching_source": {
+                    "title": best_source.get("metadata", {}).get("title") or best_source.get("title") if best_source else None,
+                    "year": best_source.get("metadata", {}).get("year") or best_source.get("year") if best_source else None,
+                    "type": best_source.get("type") if best_source else None,
+                    "id": best_source.get("id") if best_source else None
+                },
+                "matching_segment": best_segment,
+                "similarity": best_score,
+                "attribution_confidence": (
+                    "DIREKTE_KILDE" if best_score > 0.75 else
+                    "STERK_INDIKASJON" if best_score > 0.60 else
+                    "MODERAT_INDIKASJON" if best_score > 0.45 else
+                    "SVAK_INDIKASJON" if best_score > 0.30 else
+                    "INGEN_KLAR_KILDE"
+                )
+            })
+        except Exception as e:
+            print(f"   ⚠️ Feil ved analyse av setning {sent_idx}: {e}")
+            composition.append({
+                "sentence_index": sent_idx,
+                "response_sentence": sentence,
+                "best_matching_source": {"title": None, "year": None, "type": None, "id": None},
+                "matching_segment": None,
+                "similarity": 0,
+                "attribution_confidence": "FEIL_VED_ANALYSE"
+            })
     
     # Oppsummering
     source_contributions = defaultdict(lambda: {"sentences": 0, "total_similarity": 0})
