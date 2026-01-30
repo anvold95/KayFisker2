@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fisker / Genealogisk Apparat v.10.15</title>
+    <title>Fisker / Genealogisk Apparat v.10.16 (Forskermodus)</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -51,7 +51,14 @@
             
             const [selectedConcept, setSelectedConcept] = useState(null);
             const [showGenealogy, setShowGenealogy] = useState(false);
-            const [conversationHistory, setConversationHistory] = useState([]); // NY: Samtalehistorik
+            const [conversationHistory, setConversationHistory] = useState([]);
+
+            // v10.16: FORSKERMODUS STATE
+            const [researchMode, setResearchMode] = useState(false);
+            const [searchLog, setSearchLog] = useState(null);
+            const [responseComposition, setResponseComposition] = useState(null);
+            const [sourceAnalytics, setSourceAnalytics] = useState(null);
+            const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(false);
             
             const [viewport, setViewport] = useState({ 
                 w: typeof window !== 'undefined' ? window.innerWidth : 1200, 
@@ -67,6 +74,234 @@
 
             const addLog = (msg) => {
                 setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg }].slice(-3));
+            };
+
+            // v10.16: Hent kildestatistikk
+            const fetchSourceAnalytics = async () => {
+                try {
+                    const response = await fetch('/source-analytics');
+                    if (response.ok) {
+                        const data = await response.json();
+                        setSourceAnalytics(data);
+                        setShowAnalyticsPanel('stats');
+                        addLog(`Statistikk: ${data.summary?.unique_sources_cited || 0} kilder`);
+                    }
+                } catch (error) {
+                    addLog(`Statistikk-feil: ${error.message}`);
+                }
+            };
+
+            // v10.16: Eksporter analyse
+            const exportCurrentAnalysis = () => {
+                const data = {
+                    query: lastQuery,
+                    response: syntheticResponse,
+                    sources: activeStrata,
+                    genealogy: genealogy,
+                    searchLog: searchLog,
+                    responseComposition: responseComposition,
+                    researchMode: researchMode,
+                    timestamp: new Date().toISOString()
+                };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `fisker-analyse-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                addLog('Analyse eksportert');
+            };
+
+            // v10.16: Eksporter sesjon
+            const exportSession = async () => {
+                try {
+                    const res = await fetch('/export-session');
+                    if (res.ok) {
+                        const data = await res.json();
+                        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `fisker-sesjon-${Date.now()}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        addLog('Sesjon eksportert');
+                    }
+                } catch (e) {
+                    addLog(`Eksport-feil: ${e.message}`);
+                }
+            };
+
+            // v10.16: Render full kildetekst med segment-highlighting
+            const renderFullSourceText = (source) => {
+                if (!source || !source.text) return null;
+                
+                const segmentAnalysis = source.segment_analysis;
+                const topSegments = segmentAnalysis?.top_contributing || [];
+                
+                const sentences = source.text.split(/([.!?]+\s+)/).filter(Boolean);
+                
+                return (
+                    <div className="space-y-1 text-[13px] leading-relaxed">
+                        {sentences.map((sentence, i) => {
+                            const matchingSeg = topSegments.find(seg =>
+                                seg.similarity > 0.5 && (
+                                    sentence.includes(seg.text?.substring(0, 30) || '') ||
+                                    (seg.text || '').includes(sentence.substring(0, 30))
+                                )
+                            );
+                            
+                            if (matchingSeg) {
+                                const bgColor = matchingSeg.similarity > 0.7 
+                                    ? 'bg-emerald-100 border-l-4 border-emerald-500' 
+                                    : matchingSeg.similarity > 0.55 
+                                    ? 'bg-sky-100 border-l-4 border-sky-400'
+                                    : 'bg-amber-50 border-l-4 border-amber-300';
+                                
+                                return (
+                                    <span key={i} className={`${bgColor} px-2 py-0.5 inline-block my-0.5`}>
+                                        {sentence}
+                                        <span className="ml-2 text-[9px] mono text-stone-500">
+                                            ({Math.round(matchingSeg.similarity * 100)}%)
+                                        </span>
+                                    </span>
+                                );
+                            }
+                            return <span key={i} className="text-stone-600">{sentence}</span>;
+                        })}
+                    </div>
+                );
+            };
+
+            // v10.16: Render respons-komposisjon
+            const renderResponseComposition = () => {
+                if (!responseComposition || !responseComposition.sentence_attributions) return null;
+                
+                return (
+                    <div className="space-y-4">
+                        <h4 className="text-[11px] font-bold text-stone-800 flex items-center gap-2">
+                            <LucideIcon name="git-branch" size={14} />
+                            Respons-komposisjon ({responseComposition.high_confidence_attributions}/{responseComposition.total_sentences})
+                        </h4>
+                        
+                        <div className="space-y-3">
+                            {responseComposition.sentence_attributions.map((attr, i) => (
+                                <div key={i} className={`p-3 rounded border-l-4 ${
+                                    attr.attribution_confidence === 'DIREKTE_KILDE' ? 'bg-emerald-50 border-emerald-500' :
+                                    attr.attribution_confidence === 'STERK_INDIKASJON' ? 'bg-sky-50 border-sky-400' :
+                                    attr.attribution_confidence === 'MODERAT_INDIKASJON' ? 'bg-amber-50 border-amber-400' :
+                                    'bg-stone-50 border-stone-300'
+                                }`}>
+                                    <p className="text-[12px] serif text-stone-800 mb-2">"{attr.response_sentence}"</p>
+                                    <div className="flex items-center justify-between text-[9px] mono">
+                                        <span className={`px-2 py-0.5 rounded ${
+                                            attr.attribution_confidence === 'DIREKTE_KILDE' ? 'bg-emerald-200 text-emerald-800' :
+                                            attr.attribution_confidence === 'STERK_INDIKASJON' ? 'bg-sky-200 text-sky-800' :
+                                            'bg-stone-200 text-stone-600'
+                                        }`}>{attr.attribution_confidence?.replace(/_/g, ' ')}</span>
+                                        {attr.best_matching_source?.title && (
+                                            <span className="text-stone-500 truncate max-w-[150px]">← {attr.best_matching_source.title}</span>
+                                        )}
+                                        <span className="text-stone-400">{Math.round(attr.similarity * 100)}%</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            // v10.16: Render søkelogg
+            const renderSearchLog = () => {
+                if (!searchLog) return null;
+                return (
+                    <div className="space-y-4">
+                        <h4 className="text-[11px] font-bold text-stone-800 flex items-center gap-2">
+                            <LucideIcon name="search" size={14} />
+                            Søkelogg
+                        </h4>
+                        <div className="space-y-3 text-[10px] mono">
+                            <div className="bg-stone-100 p-3 rounded">
+                                <div className="text-stone-500 mb-1">Original query:</div>
+                                <div className="text-stone-800">{searchLog.query_original}</div>
+                            </div>
+                            {searchLog.query_enhanced !== searchLog.query_original && (
+                                <div className="bg-sky-50 p-3 rounded border border-sky-200">
+                                    <div className="text-sky-600 mb-1">Ekspandert til:</div>
+                                    <div className="text-sky-800">{searchLog.query_enhanced}</div>
+                                </div>
+                            )}
+                            <div className="bg-white p-3 rounded border border-stone-200">
+                                <div className="text-stone-500 mb-2">Namespace-resultater:</div>
+                                {Object.entries(searchLog.namespace_results_raw || {}).map(([ns, results]) => (
+                                    <div key={ns} className="mb-2">
+                                        <div className="font-medium text-stone-700">{ns.toUpperCase()}: {results.length} treff</div>
+                                        <div className="pl-3 text-stone-500">
+                                            {results.slice(0, 3).map((r, i) => (
+                                                <div key={i} className="truncate">• {r.title || 'Ukjent'} - {r.pinecone_score?.toFixed(4)}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            {searchLog.selection_reasoning?.length > 0 && (
+                                <div className="bg-amber-50 p-3 rounded border border-amber-200">
+                                    <div className="text-amber-700 mb-2">Seleksjonsresonnement:</div>
+                                    {searchLog.selection_reasoning.map((step, i) => (
+                                        <div key={i} className="text-amber-900 mb-1">{step.step}. {step.reason} → {step.source}</div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            // v10.16: Render statistikk
+            const renderSourceAnalytics = () => {
+                if (!sourceAnalytics) return (
+                    <div className="text-center py-8">
+                        <button onClick={fetchSourceAnalytics} className="px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 text-sm">
+                            Hent statistikk
+                        </button>
+                    </div>
+                );
+                return (
+                    <div className="space-y-4">
+                        <h4 className="text-[11px] font-bold text-stone-800">📊 Kildestatistikk</h4>
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className="bg-sky-50 p-3 rounded text-center">
+                                <div className="text-2xl font-bold text-sky-700">{sourceAnalytics.summary?.total_queries || 0}</div>
+                                <div className="text-[9px] mono text-sky-600">Queries</div>
+                            </div>
+                            <div className="bg-emerald-50 p-3 rounded text-center">
+                                <div className="text-2xl font-bold text-emerald-700">{sourceAnalytics.summary?.unique_sources_cited || 0}</div>
+                                <div className="text-[9px] mono text-emerald-600">Unike kilder</div>
+                            </div>
+                            <div className="bg-amber-50 p-3 rounded text-center">
+                                <div className="text-2xl font-bold text-amber-700">{sourceAnalytics.summary?.total_citations || 0}</div>
+                                <div className="text-[9px] mono text-amber-600">Siteringer</div>
+                            </div>
+                        </div>
+                        {sourceAnalytics.top_cited_sources?.length > 0 && (
+                            <div className="bg-white p-4 rounded border">
+                                <h5 className="text-[10px] font-bold mb-3">Mest siterte kilder</h5>
+                                {sourceAnalytics.top_cited_sources.slice(0, 10).map((src, i) => (
+                                    <div key={i} className="flex justify-between items-center py-2 border-b border-stone-100 last:border-0">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-[11px] font-medium truncate">{src.title || 'Ukjent'}</div>
+                                            <div className="text-[9px] text-stone-500">{src.author} ({src.year})</div>
+                                        </div>
+                                        <div className="text-right ml-2">
+                                            <div className="text-[12px] font-bold text-sky-600">{src.citation_count}×</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
             };
 
             useEffect(() => {
@@ -178,12 +413,15 @@
                 addLog(`Aktiverer genealogisk analyse...`);
 
                 try {
-                    const response = await fetch('/chat', {
+                    // v10.16: Velg endpoint basert på modus
+                    const endpoint = researchMode ? '/research' : '/chat';
+                    
+                    const response = await fetch(endpoint, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
                             message: prompt,
-                            history: conversationHistory  // NY: Send historik med
+                            history: conversationHistory
                         })
                     });
                     
@@ -196,6 +434,46 @@
                     
                     const data = await response.json();
                     
+                    // v10.16: Håndter forskermodus-respons
+                    if (researchMode && data.full_sources) {
+                        const newStrata = [];
+                        data.full_sources.forEach((s, i) => {
+                            newStrata.push({
+                                ...s,
+                                id: s.id || `source_${i}`,
+                                text: s.full_text || s.text,
+                                year: s.metadata?.year || s.year,
+                                type: s.type || 'PRIMARY',
+                                score: s.metadata?.pinecone_score || s.score,
+                                rerank_score: s.metadata?.rerank_score,
+                                title: s.metadata?.title || s.title,
+                                author: s.metadata?.author || s.author,
+                                excerpt: s.full_text?.substring(0, 200),
+                                excerpt_relevance: s.segment_analysis?.statistics?.max_similarity || 0,
+                                pos: getSmartPosition(s.metadata?.year || s.year, newStrata),
+                                color: (s.type || '').toUpperCase() === "PRIMARY" ? rams.blue : 
+                                       (s.type || '').toUpperCase() === "QUOTES" ? rams.orange : rams.red
+                            });
+                        });
+                        setActiveStrata(newStrata);
+                        setSyntheticResponse(data.response || "");
+                        setSearchLog(data.search_log || null);
+                        setResponseComposition(data.response_composition || null);
+                        setGenealogy(data.genealogy || null);
+                        setDetectedVisuals(data.visuals || []);
+                        setVisualNodes([]);
+                        setDiscursiveState(data.state || "GENEALOGI");
+                        setIntensity(data.intensity || 0.8);
+                        setSelectedSources([]);
+                        setConversationHistory(prev => [
+                            ...prev,
+                            { role: "user", content: prompt },
+                            { role: "assistant", content: data.response || "" }
+                        ]);
+                        addLog(`Forskermodus komplet.`);
+                        return; // Exit early for research mode
+                    }
+
                     const newStrata = [];
                     if (data.strata && Array.isArray(data.strata)) {
                         data.strata.forEach((s, i) => {
@@ -217,7 +495,6 @@
                     setGenealogy(data.genealogy || null);
                     setSelectedSources([]);
                     
-                    // NY: Opdater samtalehistorik
                     setConversationHistory(prev => [
                         ...prev,
                         { role: "user", content: prompt },
@@ -398,7 +675,11 @@
                 setSelectedSources([]);
                 setSelectedConcept(null);
                 setHoveredSource(null);
-                setConversationHistory([]);  // NY: Nulstil samtalehistorik
+                setConversationHistory([]);
+                setSearchLog(null);
+                setResponseComposition(null);
+                setSourceAnalytics(null);
+                setShowAnalyticsPanel(false);
             };
 
             useEffect(() => {
@@ -490,12 +771,10 @@
                 return () => clearInterval(simulationLoop);
             }, [draggedNode, activeStrata.length]);
 
-            // v10.15: Render tidslinje (erstatter renderDiscursiveShifts)
             const renderTimeline = () => {
                 const timeline = genealogy?.discursive_shifts?.timeline;
                 if (!timeline || timeline.length === 0) return null;
                 
-                // Tegn linjer mellem kilder i kronologisk rækkefølge
                 const sortedSources = [...activeStrata].sort((a, b) => (parseInt(a.year) || 0) - (parseInt(b.year) || 0));
                 
                 return sortedSources.map((source, i) => {
@@ -572,7 +851,6 @@
                 });
             };
 
-            // v10.15: Render tematiske forbindelser
             const renderThematicConnections = () => {
                 if (!selectedConcept) return null;
                 const thematic = genealogy?.discursive_shifts?.thematic_shifts?.find(t => t.term === selectedConcept);
@@ -632,6 +910,7 @@
                         .source-node:hover { scale: 1.01; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.15); width: 340px !important; }
                         .source-node.active { border: 2px solid black; box-shadow: 0 20px 60px rgba(0,0,0,0.15); z-index: 50; width: 400px !important; background: rgba(255, 255, 255, 0.95); }
                         .source-node.dragging { opacity: 0.7; cursor: grabbing; z-index: 200; }
+                        .research-border { border: 2px solid #f59e0b !important; box-shadow: 0 0 20px rgba(245, 158, 11, 0.2); }
                         
                         .visual-node { border-radius: 4px; overflow: hidden; border: 4px solid white; box-shadow: 0 10px 30px rgba(0,0,0,0.15); opacity: 0; animation: pop-in 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; animation-delay: 1.2s; }
                         @keyframes pop-in { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
@@ -666,7 +945,7 @@
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
                                 <div className="w-5 h-5 bg-[#e32219] flex items-center justify-center text-white font-black text-[10px]">F</div>
-                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.15</h1>
+                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.16</h1>
                             </div>
                             <span className={`text-[10px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-blue-500 animate-pulse' : 'text-gray-400'}`}>{discursiveState}</span>
                             
@@ -684,6 +963,38 @@
                         </div>
                         
                         <div className="flex items-center gap-4">
+                            {/* v10.16: FORSKERMODUS TOGGLE */}
+                            <button 
+                                onClick={() => setResearchMode(!researchMode)}
+                                className={`px-4 py-1.5 rounded-full text-[10px] mono font-bold tracking-wide transition-all ${
+                                    researchMode 
+                                        ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30' 
+                                        : 'bg-stone-100 text-stone-600 hover:bg-amber-100 hover:text-amber-700'
+                                }`}>
+                                🔬 Forsker {researchMode ? 'PÅ' : 'AV'}
+                            </button>
+                            
+                            {researchMode && (
+                                <>
+                                    <button 
+                                        onClick={fetchSourceAnalytics}
+                                        className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
+                                        📊 Statistikk
+                                    </button>
+                                    <button 
+                                        onClick={exportCurrentAnalysis}
+                                        disabled={!syntheticResponse}
+                                        className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200 disabled:opacity-30">
+                                        💾 Eksporter
+                                    </button>
+                                    <button 
+                                        onClick={exportSession}
+                                        className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
+                                        📦 Sesjon
+                                    </button>
+                                </>
+                            )}
+                            
                             <button 
                                 onClick={() => setShowGenealogy(!showGenealogy)}
                                 className={`px-3 py-1.5 rounded-full text-[9px] mono font-medium tracking-wide transition-all ${
@@ -692,7 +1003,6 @@
                                 Tidslinje
                             </button>
                             
-                            {/* v10.15: Viser kildeoversigt i stedet for "brudd" */}
                             {genealogy?.discursive_shifts?.source_overview && (
                                 <span className="text-[9px] mono text-stone-500">
                                     {genealogy.discursive_shifts.source_overview.primary_count || 0} primære / {genealogy.discursive_shifts.source_overview.secondary_count || 0} sekundære
@@ -784,7 +1094,7 @@
                                         onMouseLeave={() => setHoveredSource(null)}
                                         className={`source-node absolute p-6 w-[290px] pointer-events-auto bg-white/40 backdrop-blur-xl border-l-4 border border-white/30 ${
                                             isDragging ? 'dragging' : ''
-                                        } ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected || isInGenealogy ? 'active' : 'shadow-sm'}`} 
+                                        } ${isDimmed ? 'opacity-30 blur-[1px]' : 'opacity-100'} ${isSelected || isInGenealogy ? 'active' : 'shadow-sm'} ${researchMode ? 'research-border' : ''}`} 
                                         style={{ 
                                             left: `${s.pos.x}%`, top: `${s.pos.y}%`, 
                                             transform: 'translate(-50%, -50%)', 
@@ -797,6 +1107,17 @@
                                                 {s.type}
                                             </span>
                                             <div className="flex items-center gap-2">
+                                                {/* v10.16: Vis scores i forskermodus */}
+                                                {researchMode && s.score && (
+                                                    <span className="text-[8px] mono text-sky-500" title="Pinecone score">
+                                                        P:{s.score?.toFixed(3)}
+                                                    </span>
+                                                )}
+                                                {researchMode && s.rerank_score && (
+                                                    <span className="text-[8px] mono text-amber-500" title="Rerank score">
+                                                        R:{s.rerank_score?.toFixed(3)}
+                                                    </span>
+                                                )}
                                                 {hasAttribution && <div className="w-2 h-2 rounded-full bg-sky-500" title="Brugt i svar"></div>}
                                                 {isSelected && <LucideIcon name="check-circle" size={14} className="text-green-600" />}
                                                 <span className="text-[10px] mono text-gray-400">#{s.year || '?'}</span>
@@ -851,7 +1172,6 @@
                         </div>
                     )}
 
-                    {/* v10.15: SIDEBAR MED TIDSLINJE OG TEMATIK */}
                     {(selectedSources.length > 0 || showGenealogy) && (
                         <aside className="fixed right-0 top-12 bottom-0 w-[520px] bg-white/70 backdrop-blur-xl border-l border-white/40 z-40 overflow-y-auto flex flex-col shadow-2xl">
                             <header className="p-6 border-b border-white/40 sticky top-0 z-10 backdrop-blur-xl bg-white/80">
@@ -872,9 +1192,38 @@
                                     </button>
                                 </div>
                                 
-                                {/* v10.15: Tematisk sporing - kombinerer concept_genealogies og thematic_shifts */}
-                                {(genealogy?.concept_genealogies && Object.keys(genealogy.concept_genealogies).length > 0) || 
-                                 (genealogy?.discursive_shifts?.thematic_shifts?.length > 0) ? (
+                                {/* v10.16: Tabs for forskermodus */}
+                                {researchMode && (searchLog || responseComposition || sourceAnalytics) && (
+                                    <div className="flex gap-2 mt-3 flex-wrap">
+                                        <button 
+                                            onClick={() => setShowAnalyticsPanel(false)}
+                                            className={`px-3 py-1.5 rounded text-[10px] mono ${!showAnalyticsPanel ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                            Kilder
+                                        </button>
+                                        {searchLog && (
+                                            <button 
+                                                onClick={() => setShowAnalyticsPanel('search')}
+                                                className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'search' ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                                Søkelogg
+                                            </button>
+                                        )}
+                                        {responseComposition && (
+                                            <button 
+                                                onClick={() => setShowAnalyticsPanel('composition')}
+                                                className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'composition' ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                                Komposisjon
+                                            </button>
+                                        )}
+                                        <button 
+                                            onClick={() => { fetchSourceAnalytics(); setShowAnalyticsPanel('stats'); }}
+                                            className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'stats' ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                            Statistikk
+                                        </button>
+                                    </div>
+                                )}
+
+                                {((genealogy?.concept_genealogies && Object.keys(genealogy.concept_genealogies).length > 0) || 
+                                  (genealogy?.discursive_shifts?.thematic_shifts?.length > 0)) && !showAnalyticsPanel ? (
                                     <div className="mt-4">
                                         <label className="text-[10px] mono font-medium text-stone-600 mb-2 block">
                                             Spor begreb
@@ -900,8 +1249,13 @@
                             </header>
                             
                             <div className="flex-grow overflow-y-auto p-6 space-y-6">
+                                {/* v10.16: Analytics panels */}
+                                {showAnalyticsPanel === 'search' && renderSearchLog()}
+                                {showAnalyticsPanel === 'composition' && renderResponseComposition()}
+                                {showAnalyticsPanel === 'stats' && renderSourceAnalytics()}
+
                                 {/* SELECTED SOURCES */}
-                                {selectedSources.length > 0 && selectedSources.map((s, i) => {
+                                {selectedSources.length > 0 && !showAnalyticsPanel && selectedSources.map((s, i) => {
                                     const attr = genealogy?.source_attributions?.find(a => a.source_ref === s.ref);
                                     return (
                                         <div key={s.id} className="bg-white/60 backdrop-blur-md p-5 rounded-sm border border-white/40 shadow-sm space-y-4">
@@ -959,11 +1313,43 @@
                                                 )}
                                             </div>
                                             
-                                            <div className="serif text-[15px] leading-relaxed text-stone-800">
-                                                {getHighlightedText(s.text, syntheticResponse, s.ref)}
-                                            </div>
+                                            {/* v10.16: Kildetekst - full i forskermodus */}
+                                            {researchMode ? (
+                                                <div className="bg-stone-50 p-4 rounded border border-stone-200 max-h-96 overflow-y-auto">
+                                                    <div className="text-[10px] mono text-stone-500 mb-2">FULL KILDETEKST:</div>
+                                                    {renderFullSourceText(s)}
+                                                </div>
+                                            ) : (
+                                                <div className="serif text-[15px] leading-relaxed text-stone-800">
+                                                    {getHighlightedText(s.text, syntheticResponse, s.ref)}
+                                                </div>
+                                            )}
                                             
-                                            {s.excerpt_explanation && (
+                                            {/* v10.16: Segment-analyse i forskermodus */}
+                                            {researchMode && s.segment_analysis?.statistics && (
+                                                <div className="bg-amber-50 p-4 rounded border border-amber-200 mt-4">
+                                                    <div className="text-[10px] mono font-bold text-amber-800 mb-2">SEGMENT-ANALYSE:</div>
+                                                    <div className="grid grid-cols-2 gap-2 text-[9px] mono mb-3">
+                                                        <div>Analyserte: {s.segment_analysis.statistics.total_segments_analyzed}</div>
+                                                        <div>Max sim: {((s.segment_analysis.statistics.max_similarity || 0) * 100).toFixed(1)}%</div>
+                                                    </div>
+                                                    {s.segment_analysis.top_contributing?.slice(0, 3).map((seg, idx) => (
+                                                        <div key={idx} className="bg-white p-2 rounded mb-2 text-[10px]">
+                                                            <div className="flex justify-between mb-1">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[8px] ${
+                                                                    seg.contribution_level === 'DIREKTE' ? 'bg-emerald-200 text-emerald-800' :
+                                                                    seg.contribution_level === 'HØY' ? 'bg-sky-200 text-sky-800' :
+                                                                    'bg-stone-200 text-stone-600'
+                                                                }`}>{seg.contribution_level}</span>
+                                                                <span className="text-stone-500">{((seg.similarity || 0) * 100).toFixed(1)}%</span>
+                                                            </div>
+                                                            <p className="text-stone-600 italic">"{seg.text}"</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            
+                                            {s.excerpt_explanation && !researchMode && (
                                                 <div className="text-[10px] text-stone-600 leading-relaxed pt-3 border-t border-stone-200 italic">
                                                     {s.excerpt_explanation}
                                                 </div>
@@ -972,10 +1358,9 @@
                                     );
                                 })}
                                 
-                                {/* GENEALOGICAL ANALYSIS - v10.15 */}
-                                {showGenealogy && genealogy && (
+                                {/* GENEALOGICAL ANALYSIS */}
+                                {showGenealogy && genealogy && !showAnalyticsPanel && (
                                     <>
-                                        {/* v10.15: TIDSLINJE (erstatter "Diskursive brudd") */}
                                         {genealogy.discursive_shifts?.timeline?.length > 0 && (
                                             <div className="space-y-4">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -1016,7 +1401,6 @@
                                             </div>
                                         )}
                                         
-                                        {/* v10.15: TEMATISKE SPOR */}
                                         {selectedConcept && genealogy.discursive_shifts?.thematic_shifts && (
                                             (() => {
                                                 const thematic = genealogy.discursive_shifts.thematic_shifts.find(t => t.term === selectedConcept);
@@ -1055,7 +1439,6 @@
                                             })()
                                         )}
                                         
-                                        {/* CONCEPT GENEALOGY (beholdt fra v10.11) */}
                                         {selectedConcept && genealogy.concept_genealogies?.[selectedConcept] && (
                                             <div className="space-y-4">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -1112,7 +1495,6 @@
                                             </div>
                                         )}
                                         
-                                        {/* v10.15: KILDEOVERSIGT (erstatter power_knowledge delvist) */}
                                         {genealogy.discursive_shifts?.source_overview && (
                                             <div className="space-y-3">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -1148,7 +1530,6 @@
                                             </div>
                                         )}
 
-                                        {/* KILDEFORDELING (beholdt fra v10.11) */}
                                         {genealogy.power_knowledge && (
                                             <div className="space-y-3">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
@@ -1274,7 +1655,7 @@
                                     </div>
                                     <div className="mt-6 flex justify-between items-center text-[9px] mono text-stone-500">
                                         <div className="flex items-center gap-3">
-                                            <span>v.10.15</span>
+                                            <span>v.10.16</span>
                                             {conversationHistory.length > 0 && (
                                                 <span className="px-2 py-0.5 bg-sky-100 text-sky-700 rounded-full">
                                                     {Math.floor(conversationHistory.length / 2)} udvekslinger
