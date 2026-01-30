@@ -1,12 +1,14 @@
 """
-KAY FISKER LANGUAGE MODEL v10.15
-================================
-KOMBINERER:
-- v10.14 arkitektur: Gemini som assistent, LoRA ser kilder + hint
-- v10.6 prompt: Epistemiske niveauer, kildeprioritet, Fisker-stemme
+KAY FISKER LANGUAGE MODEL v10.16 - FORSKERMODUS
+================================================
+UTVIDELSER:
+- Fullstendig kildeattribusjon uten blur
+- Detaljert logging av kildevalg
+- Kildefrekvens-tracking over tid
+- Eksportfunksjoner for analyse
+- Forskermodus API-endpoint
 
-Begge modeller ser kildene, Gemini gir fokus-hint,
-men LoRA får strukturert prompt for syntese og vurdering.
+Basert på v10.15 arkitektur: Gemini som assistent, LoRA for stemme
 """
 
 import os
@@ -28,6 +30,7 @@ from pinecone import Pinecone, ServerlessSpec
 from huggingface_hub import hf_hub_download, login, whoami
 from scipy.spatial.distance import cosine
 from sklearn.cluster import DBSCAN
+import hashlib
 
 # v10.13: Gemini for faktaekstraksjon
 try:
@@ -70,13 +73,8 @@ else:
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv")
-EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"  # 768-dim (matcher Gemini-arkiv)
+EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"
 
-# =====================================================
-# v10.13: TO-TRINNS ARKITEKTUR
-# Trinn 1: Gemini for fakta | Trinn 2: LoRA for stemme
-# Fallback til kun LoRA hvis Gemini ikke er tilgjengelig
-# =====================================================
 USE_MIXTRAL = os.environ.get("USE_MIXTRAL", "false").lower() == "true"
 
 if USE_MIXTRAL:
@@ -104,6 +102,81 @@ tokenizer = None
 embedder = None
 reranker = None
 pinecone_index = None
+
+# =====================================================
+# v10.16: FORSKERMODUS - KILDEFREKVENS-TRACKING
+# =====================================================
+source_frequency_db = defaultdict(lambda: {
+    "count": 0,
+    "queries": [],
+    "first_seen": None,
+    "last_seen": None,
+    "avg_score": 0.0,
+    "avg_attribution": 0.0,
+    "namespace": None,
+    "year": None,
+    "title": None,
+    "author": None
+})
+
+query_history = []  # Lagrer alle queries med resultater
+
+def generate_source_id(metadata: dict) -> str:
+    """Genererer konsistent ID for en kilde basert på metadata"""
+    key = f"{metadata.get('title', '')}_{metadata.get('year', '')}_{metadata.get('author', '')}"
+    return hashlib.md5(key.encode()).hexdigest()[:12]
+
+def track_source_usage(sources: list, query: str, response: str):
+    """
+    Tracker kildebruk over tid.
+    Kalles etter hver vellykket RAG-operasjon.
+    """
+    timestamp = datetime.now().isoformat()
+    
+    query_record = {
+        "query": query,
+        "timestamp": timestamp,
+        "response_length": len(response),
+        "sources_used": [],
+        "total_sources": len(sources)
+    }
+    
+    for s in sources:
+        source_id = generate_source_id(s)
+        
+        # Oppdater kildefrekvens
+        source_frequency_db[source_id]["count"] += 1
+        source_frequency_db[source_id]["queries"].append({
+            "query": query[:100],  # Truncer for lagring
+            "timestamp": timestamp,
+            "pinecone_score": s.get("score", 0),
+            "attribution_strength": s.get("excerpt_relevance", 0)
+        })
+        
+        if source_frequency_db[source_id]["first_seen"] is None:
+            source_frequency_db[source_id]["first_seen"] = timestamp
+        source_frequency_db[source_id]["last_seen"] = timestamp
+        
+        # Oppdater metadata
+        source_frequency_db[source_id]["namespace"] = s.get("type")
+        source_frequency_db[source_id]["year"] = s.get("year")
+        source_frequency_db[source_id]["title"] = s.get("title")
+        source_frequency_db[source_id]["author"] = s.get("author")
+        
+        # Beregn gjennomsnitt
+        all_scores = [q["pinecone_score"] for q in source_frequency_db[source_id]["queries"]]
+        all_attr = [q["attribution_strength"] for q in source_frequency_db[source_id]["queries"]]
+        source_frequency_db[source_id]["avg_score"] = sum(all_scores) / len(all_scores)
+        source_frequency_db[source_id]["avg_attribution"] = sum(all_attr) / len(all_attr) if all_attr else 0
+        
+        query_record["sources_used"].append({
+            "id": source_id,
+            "title": s.get("title"),
+            "score": s.get("score", 0)
+        })
+    
+    query_history.append(query_record)
+
 
 # --- VISUAL DATABASE ---
 VISUALS_DB = {
@@ -216,34 +289,17 @@ def normalize_orthography(txt: str) -> str:
     return txt
 
 def fix_common_ocr_errors(txt: str) -> str:
-    """
-    Fikser vanlige OCR-feil i arkivtekst.
-    Kjøres på kildetekst FØR den sendes til modellen.
-    """
+    """Fikser vanlige OCR-feil i arkivtekst."""
     if not txt:
         return txt
     
-    # 1. Årstall: "192829" → "1928-29", "193539" → "1935-39"
-    def fix_year_range(match):
-        digits = match.group(0)
-        if len(digits) == 6:
-            return f"{digits[:4]}-{digits[4:]}"
-        elif len(digits) == 8:
-            return f"{digits[:4]}-{digits[4:]}"
-        return digits
-    
-    txt = re.sub(r'\b(19\d{4})\b', fix_year_range, txt)
-    txt = re.sub(r'\b(19\d{6})\b', fix_year_range, txt)
-    txt = re.sub(r'\b(20\d{4})\b', fix_year_range, txt)
-    
-    # 2. "Opførelsesaar" varianter
+    txt = re.sub(r'\b(19\d{4})\b', lambda m: f"{m.group(0)[:4]}-{m.group(0)[4:]}", txt)
+    txt = re.sub(r'\b(19\d{6})\b', lambda m: f"{m.group(0)[:4]}-{m.group(0)[4:]}", txt)
+    txt = re.sub(r'\b(20\d{4})\b', lambda m: f"{m.group(0)[:4]}-{m.group(0)[4:]}", txt)
     txt = re.sub(r'Opf[øo]relsesa+r\s*:', 'Opførelsesår:', txt, flags=re.IGNORECASE)
-    
-    # 3. Spacing-fixes
     txt = re.sub(r'\s+,', ',', txt)
     txt = re.sub(r'\s+\.', '.', txt)
     
-    # 4. Sammenslåtte ord (vanlige OCR-feil)
     ocr_compounds = {
         r'fremmestkunstneren': 'fremmest kunstneren',
         r'fremmestkunst': 'fremmest kunst',
@@ -261,14 +317,9 @@ def fix_common_ocr_errors(txt: str) -> str:
     return txt
 
 def enhance_query(user_prompt: str) -> str:
-    """
-    MINIMAL query expansion v10.7
-    - Kun konkrete værker får expansion
-    - Alt annet: trust embedder
-    """
+    """MINIMAL query expansion v10.7"""
     prompt_lower = user_prompt.lower()
     
-    # KUN konkrete byggværker - ingen andre patterns
     works_map = {
         "vestersøhus": "Vestersøhus Vester Søgade 1935 Kay Fisker boligblokk",
         "dronningegården": "Dronningegården Dronningens Tværgade 1943 Kay Fisker",
@@ -284,11 +335,10 @@ def enhance_query(user_prompt: str) -> str:
             print(f"   🎯 Konkret værk detekteret: {work}")
             return expansion
     
-    # Alt annet: Legg kun til "Kay Fisker" hvis mangler
     if "fisker" not in prompt_lower:
         return f"Kay Fisker {user_prompt}"
     
-    return user_prompt  # INGEN expansion - trust embedder
+    return user_prompt
 
 def extract_temporal_context(user_prompt: str, timeline: str) -> str:
     """Henter relevante timeline-segmenter"""
@@ -432,13 +482,166 @@ def find_attributable_segments(source_text: str, response_text: str, threshold: 
     attributed.sort(key=lambda x: x["similarity"], reverse=True)
     return attributed[:2]
 
+
+# =====================================================
+# v10.16: UTVIDET SEGMENT-ANALYSE FOR FORSKERMODUS
+# =====================================================
+
+def detailed_segment_analysis(source_text: str, response_text: str) -> dict:
+    """
+    FORSKERMODUS: Detaljert analyse av hvordan kildetekst bidrar til respons.
+    Returnerer alle segmenter med similarity-scorer, ikke bare top-2.
+    """
+    if not embedder:
+        return {"error": "Embedder ikke tilgjengelig", "segments": []}
+    
+    source_words = source_text.split()
+    if len(source_words) < 10:
+        return {"error": "Kildetekst for kort", "segments": []}
+    
+    # Flere vindusstørrelser for finere analyse
+    all_segments = []
+    for window_size in [10, 15, 20, 30]:
+        step = window_size // 2
+        for i in range(0, len(source_words) - window_size + 1, step):
+            segment_text = " ".join(source_words[i:i+window_size])
+            all_segments.append({
+                "text": segment_text,
+                "start_word": i,
+                "end_word": i + window_size,
+                "window_size": window_size,
+                "char_start": len(" ".join(source_words[:i])) + (1 if i > 0 else 0),
+                "char_end": len(" ".join(source_words[:i+window_size]))
+            })
+    
+    if not all_segments:
+        return {"error": "Ingen segmenter generert", "segments": []}
+    
+    # Beregn similarity for alle
+    response_emb = embedder.encode(response_text, convert_to_tensor=True)
+    segment_texts = [s["text"] for s in all_segments]
+    segment_embs = embedder.encode(segment_texts, convert_to_tensor=True)
+    similarities = util.cos_sim(response_emb, segment_embs)[0].cpu().numpy()
+    
+    # Legg til scores
+    for idx, seg in enumerate(all_segments):
+        seg["similarity"] = float(similarities[idx])
+        seg["contribution_level"] = (
+            "DIREKTE" if seg["similarity"] > 0.70 else
+            "HØY" if seg["similarity"] > 0.55 else
+            "MEDIUM" if seg["similarity"] > 0.40 else
+            "LAV" if seg["similarity"] > 0.25 else
+            "MINIMAL"
+        )
+    
+    # Sorter etter similarity
+    all_segments.sort(key=lambda x: x["similarity"], reverse=True)
+    
+    # Statistikk
+    sims = [s["similarity"] for s in all_segments]
+    stats = {
+        "total_segments_analyzed": len(all_segments),
+        "max_similarity": float(max(sims)),
+        "min_similarity": float(min(sims)),
+        "mean_similarity": float(np.mean(sims)),
+        "std_similarity": float(np.std(sims)),
+        "segments_above_0.5": len([s for s in sims if s > 0.5]),
+        "segments_above_0.7": len([s for s in sims if s > 0.7])
+    }
+    
+    return {
+        "segments": all_segments,
+        "statistics": stats,
+        "top_contributing": all_segments[:5],
+        "coverage_estimate": stats["segments_above_0.5"] / len(all_segments) if all_segments else 0
+    }
+
+
+def analyze_response_composition(response_text: str, sources: list) -> dict:
+    """
+    FORSKERMODUS: Analyserer hvilke deler av responsen som kommer fra hvilke kilder.
+    """
+    if not embedder:
+        return {"error": "Embedder ikke tilgjengelig"}
+    
+    # Del opp responsen i setninger
+    response_sentences = re.split(r'(?<=[.!?])\s+', response_text)
+    response_sentences = [s.strip() for s in response_sentences if len(s.strip()) > 10]
+    
+    if not response_sentences:
+        return {"error": "Ingen setninger i respons"}
+    
+    composition = []
+    
+    for sent_idx, sentence in enumerate(response_sentences):
+        sent_emb = embedder.encode(sentence, convert_to_tensor=True)
+        
+        best_source = None
+        best_score = 0
+        best_segment = None
+        
+        for source in sources:
+            source_text = source.get("text", "")
+            if not source_text:
+                continue
+            
+            # Finn beste match i denne kilden
+            source_sentences = re.split(r'(?<=[.!?])\s+', source_text)
+            if not source_sentences:
+                continue
+            
+            source_embs = embedder.encode(source_sentences, convert_to_tensor=True)
+            sims = util.cos_sim(sent_emb, source_embs)[0].cpu().numpy()
+            
+            max_sim_idx = int(np.argmax(sims))
+            max_sim = float(sims[max_sim_idx])
+            
+            if max_sim > best_score:
+                best_score = max_sim
+                best_source = source
+                best_segment = source_sentences[max_sim_idx]
+        
+        composition.append({
+            "sentence_index": sent_idx,
+            "response_sentence": sentence,
+            "best_matching_source": {
+                "title": best_source.get("title") if best_source else None,
+                "year": best_source.get("year") if best_source else None,
+                "type": best_source.get("type") if best_source else None,
+                "id": best_source.get("id") if best_source else None
+            },
+            "matching_segment": best_segment,
+            "similarity": best_score,
+            "attribution_confidence": (
+                "DIREKTE_KILDE" if best_score > 0.75 else
+                "STERK_INDIKASJON" if best_score > 0.60 else
+                "MODERAT_INDIKASJON" if best_score > 0.45 else
+                "SVAK_INDIKASJON" if best_score > 0.30 else
+                "INGEN_KLAR_KILDE"
+            )
+        })
+    
+    # Oppsummering
+    source_contributions = defaultdict(lambda: {"sentences": 0, "total_similarity": 0})
+    for c in composition:
+        if c["best_matching_source"]["id"]:
+            src_id = c["best_matching_source"]["id"]
+            source_contributions[src_id]["sentences"] += 1
+            source_contributions[src_id]["total_similarity"] += c["similarity"]
+            source_contributions[src_id]["title"] = c["best_matching_source"]["title"]
+    
+    return {
+        "sentence_attributions": composition,
+        "source_contributions": dict(source_contributions),
+        "total_sentences": len(response_sentences),
+        "high_confidence_attributions": len([c for c in composition if c["similarity"] > 0.6])
+    }
+
+
 # --- GENEALOGISK ANALYSE ---
 
 def detect_discursive_shifts(strata: list) -> dict:
-    """
-    Analyserer kilder over tid - viser tidslinje og kun ægte diskursive skift.
-    Et ægte skift kræver: samme emne, men ændret holdning/terminologi.
-    """
+    """Analyserer kilder over tid"""
     if not embedder or len(strata) < 2:
         return {"timeline": [], "thematic_shifts": [], "source_overview": []}
     
@@ -447,7 +650,6 @@ def detect_discursive_shifts(strata: list) -> dict:
     if len(sorted_strata) < 2:
         return {"timeline": [], "thematic_shifts": [], "source_overview": []}
     
-    # 1. TIDSLINJE: Simpel oversigt over kilder over tid (uden "brud"-terminologi)
     timeline = []
     for s in sorted_strata:
         timeline.append({
@@ -457,14 +659,9 @@ def detect_discursive_shifts(strata: list) -> dict:
             "type": "PRIMÆR" if "Kay Fisker" in s["ref"] and int(s["year"]) <= 1965 else "SEKUNDÆR"
         })
     
-    # 2. TEMATISKE SKIFT: Kun når samme emneord optræder med forskellige kontekster
-    # Dette er mere meningsfuldt end blot at sammenligne alle tekster
     thematic_shifts = []
-    
-    # Find nøgleord der optræder i flere kilder
     all_texts = [(s["year"], s["text"].lower(), s["ref"]) for s in sorted_strata]
     
-    # Arkitektur-relevante termer at spore
     key_terms = ["rækkehus", "etage", "funktionel", "modernisme", "tradition", 
                  "bolig", "arbejder", "social", "form", "materiale"]
     
@@ -472,7 +669,6 @@ def detect_discursive_shifts(strata: list) -> dict:
         occurrences = []
         for year, text, ref in all_texts:
             if term in text:
-                # Find kontekst omkring termen
                 idx = text.find(term)
                 context = text[max(0, idx-50):min(len(text), idx+50)]
                 occurrences.append({
@@ -481,17 +677,15 @@ def detect_discursive_shifts(strata: list) -> dict:
                     "context": context.strip()
                 })
         
-        # Kun interessant hvis termen optræder i flere år
         if len(occurrences) >= 2:
             years = [o["year"] for o in occurrences]
-            if len(set(years)) >= 2:  # Forskellige år
+            if len(set(years)) >= 2:
                 thematic_shifts.append({
                     "term": term,
                     "occurrences": occurrences,
                     "span": f"{min(years)}-{max(years)}"
                 })
     
-    # 3. KILDEOVERSIGT: Grupperet efter periode
     source_overview = {
         "total": len(sorted_strata),
         "span": f"{sorted_strata[0]['year']}-{sorted_strata[-1]['year']}" if sorted_strata else None,
@@ -501,9 +695,8 @@ def detect_discursive_shifts(strata: list) -> dict:
     
     return {
         "timeline": timeline,
-        "thematic_shifts": thematic_shifts[:5],  # Max 5 mest relevante
+        "thematic_shifts": thematic_shifts[:5],
         "source_overview": source_overview,
-        # Behold for bagudkompatibilitet, men tom
         "shifts": [],
         "periods": []
     }
@@ -592,7 +785,6 @@ def analyze_power_knowledge_nexus(strata: list) -> dict:
         "QUOTES": type_counts.get("QUOTES", 0)
     }
     
-    # v10.11: Mer forståelig terminologi
     primary_count = type_counts.get("PRIMARY", 0)
     quotes_count = type_counts.get("QUOTES", 0)
     
@@ -610,7 +802,7 @@ def analyze_power_knowledge_nexus(strata: list) -> dict:
         "authority_citations": authority_markers["citations"],
         "hierarchy": authority_markers["authority_hierarchy"],
         "dominant_discourse": dominant,
-        "dominant_explanation": dominant_explanation,  # NY
+        "dominant_explanation": dominant_explanation,
         "total_authority_markers": len(authority_markers["citations"])
     }
 
@@ -741,7 +933,6 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
             "decade_distribution": dict(Counter([y // 10 * 10 for y in years]))
         }
     
-    # Ny struktur: timeline og thematic_shifts i stedet for "shifts/brud"
     discursive = genealogical_analysis["discursive_shifts"]
     if discursive.get("thematic_shifts"):
         genealogical_analysis["thematic_continuities"] = [{
@@ -763,6 +954,7 @@ def perform_full_genealogical_analysis(strata: list, response_text: str, query: 
     
     return combined
 
+
 # --- RAG-LOGIKK ---
 
 def _fetch_ns(ns: str, qvec, top_k: int):
@@ -782,26 +974,56 @@ def _fetch_ns(ns: str, qvec, top_k: int):
         print(f"⚠️ Feil i namespace '{ns}': {e}")
         return []
 
-def pinecone_search_logic(user_prompt: str, total_results: int = 8):
+
+# =====================================================
+# v10.16: UTVIDET RAG MED FORSKERMODUS-LOGGING
+# =====================================================
+
+def pinecone_search_logic(user_prompt: str, total_results: int = 8, research_mode: bool = False):
     """
     RAG-søk med PRIMARY-first strategi v10.10
+    v10.16: Utvidet logging for forskermodus
     """
     if not (pinecone_index and embedder):
         print("⚠️ Pinecone eller embedder ikke tilgjengelig")
-        return []
+        return [], {} if research_mode else []
     
     print(f"\n🔍 Analyserer: '{user_prompt}'")
     enhanced = enhance_query(user_prompt)
     print(f"   ↳ Ekspandert til: '{enhanced}'")
     qvec = embedder.encode(enhanced).tolist()
     
+    # v10.16: Detaljert søkelogg
+    search_log = {
+        "query_original": user_prompt,
+        "query_enhanced": enhanced,
+        "embedding_sample": qvec[:10],  # Første 10 dimensjoner
+        "timestamp": datetime.now().isoformat(),
+        "namespace_results_raw": {},
+        "rerank_applied": False,
+        "selection_reasoning": []
+    }
+    
     # Hent fra alle namespaces
     ns_quotas = {"primary": 10, "secondary": 4, "quotes": 3}
     pool = defaultdict(list)
     
     for ns, quota in ns_quotas.items():
-        pool[ns] = _fetch_ns(ns, qvec, top_k=quota)
-        print(f"   ↳ {ns}: {len(pool[ns])} matches")
+        raw_matches = _fetch_ns(ns, qvec, top_k=quota)
+        pool[ns] = raw_matches
+        print(f"   ↳ {ns}: {len(raw_matches)} matches")
+        
+        # v10.16: Logg rå resultater
+        search_log["namespace_results_raw"][ns] = [
+            {
+                "id": m.get("id"),
+                "pinecone_score": m.get("score"),
+                "year": m.get("metadata", {}).get("year"),
+                "title": m.get("metadata", {}).get("title", "")[:80],
+                "text_preview": m.get("metadata", {}).get("text", "")[:150]
+            }
+            for m in raw_matches
+        ]
 
     # Clean OCR
     cleaned_pool = defaultdict(list)
@@ -817,30 +1039,65 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
                 cleaned_pool[ns].append(m)
 
     # Rerank
+    rerank_scores = {}
     if reranker:
         print("   🔄 Reranking...")
+        search_log["rerank_applied"] = True
         for ns in cleaned_pool:
             if not cleaned_pool[ns]:
                 continue
             pairs = [(user_prompt, m["metadata"]["text"]) for m in cleaned_pool[ns]]
             scores = reranker.predict(pairs)
+            
+            # v10.16: Logg rerank-scorer
+            for idx, (match, score) in enumerate(zip(cleaned_pool[ns], scores)):
+                match_id = match.get("id", f"{ns}_{idx}")
+                rerank_scores[match_id] = float(score)
+                match["rerank_score"] = float(score)
+            
             cleaned_pool[ns] = [x for _, x in sorted(zip(scores, cleaned_pool[ns]), key=lambda z: z[0], reverse=True)]
+    
+    search_log["rerank_scores"] = rerank_scores
 
     # PRIMARY-FIRST SELECTION
     final_selection = []
     
     # Start med 3 PRIMARY
-    for _ in range(3):
+    for i in range(3):
         if cleaned_pool["primary"]:
-            final_selection.append(cleaned_pool["primary"].pop(0))
+            match = cleaned_pool["primary"].pop(0)
+            final_selection.append(match)
+            search_log["selection_reasoning"].append({
+                "step": len(final_selection),
+                "reason": "PRIMARY-first prioritering",
+                "source": match.get("metadata", {}).get("title", "unknown"),
+                "pinecone_score": match.get("score"),
+                "rerank_score": match.get("rerank_score")
+            })
     
     # Så 1 SECONDARY (kontekst)
     if cleaned_pool["secondary"]:
-        final_selection.append(cleaned_pool["secondary"].pop(0))
+        match = cleaned_pool["secondary"].pop(0)
+        final_selection.append(match)
+        search_log["selection_reasoning"].append({
+            "step": len(final_selection),
+            "reason": "SECONDARY for kontekst",
+            "source": match.get("metadata", {}).get("title", "unknown"),
+            "pinecone_score": match.get("score"),
+            "rerank_score": match.get("rerank_score")
+        })
     
     # Så 1 QUOTES (hvis tilgjengelig)
     if cleaned_pool["quotes"]:
-        final_selection.append(cleaned_pool["quotes"].pop(0))
+        match = cleaned_pool["quotes"].pop(0)
+        final_selection.append(match)
+        search_log["selection_reasoning"].append({
+            "step": len(final_selection),
+            "reason": "QUOTES for autentisitet",
+            "source": match.get("metadata", {}).get("title", "unknown"),
+            "pinecone_score": match.get("score"),
+            "rerank_score": match.get("rerank_score")
+        })
     
     # Fylle opp resten: PRIMARY først
     remaining = []
@@ -857,6 +1114,13 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
         candidate = remaining.pop(0)
         if candidate not in final_selection:
             final_selection.append(candidate)
+            search_log["selection_reasoning"].append({
+                "step": len(final_selection),
+                "reason": "Fill-up (rerank-sortert)",
+                "source": candidate.get("metadata", {}).get("title", "unknown"),
+                "pinecone_score": candidate.get("score"),
+                "rerank_score": candidate.get("rerank_score")
+            })
     
     print(f"   ✅ Returnerer {len(final_selection)} kilder (PRIMARY-first)")
     
@@ -866,32 +1130,337 @@ def pinecone_search_logic(user_prompt: str, total_results: int = 8):
         year = md.get('year', '?')
         print(f"      [{i+1}] {title} ({year}) | {md.get('text', '')[:50]}...")
     
+    if research_mode:
+        return final_selection, search_log
     return final_selection
 
-# --- API ENDEPUNKT ---
 
-@app.post("/chat")
-async def api_chat(req: Request):
+# =====================================================
+# v10.16: FORSKERMODUS API-ENDPOINTS
+# =====================================================
+
+@app.post("/research")
+async def research_mode_endpoint(req: Request):
+    """
+    FORSKERMODUS: Fullstendig kildetekst + detaljert attributionsanalyse.
+    Returnerer ALT - ingen blur, ingen trunkering.
+    """
     data = await req.json()
     user_prompt = data.get("message", "")
-    history = data.get("history", [])  # NY: samtalehistorik
+    history = data.get("history", [])
     
     if len(user_prompt.strip()) < 3:
         return JSONResponse({"error": "Spørgsmål for kort"}, 400)
     
-    # NY: Byg søgeforespørgsel der inkluderer kontekst fra historik
+    # Søk med forskermodus-logging
     search_query = user_prompt
     if history and len(history) >= 2:
-        # Udtræk kun nøgleord fra sidste svar (ikke hele teksten)
         last_response = history[-1].get("content", "") if history[-1].get("role") == "assistant" else ""
-        # Find navne og fagtermer (ord med stort begyndelsesbogstav eller over 6 tegn)
         keywords = re.findall(r'\b[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)?\b', last_response)
-        keywords = list(set(keywords))[:5]  # Max 5 unikke nøgleord
+        keywords = list(set(keywords))[:5]
         if keywords:
             search_query = f"{user_prompt} {' '.join(keywords)}"
-            print(f"   🔄 Samtale-kontekst: {len(history)} beskeder, nøgleord: {keywords}")
+    
+    matches, search_log = pinecone_search_logic(search_query, total_results=8, research_mode=True)
+    
+    if not matches:
+        return JSONResponse({
+            "error": "Ingen kilder funnet",
+            "search_log": search_log
+        }, 200)
+    
+    # Bygg kilde-kontekst (samme som vanlig)
+    source_lines = []
+    for i, m in enumerate(matches, 1):
+        text = m["metadata"].get("text", "")[:600]
+        year = m["metadata"].get("year", "?")
+        title = m["metadata"].get("title", "Arkiv")
+        author = m["metadata"].get("author", "Kay Fisker")
+        
+        try:
+            year_int = int(year) if year != "?" else 1950
+        except:
+            year_int = 1950
+            
+        if year_int > 1965 or author != "Kay Fisker":
+            source_prefix = f"[SEKUNDÆRKILDE - '{title}' av {author}, {year}]"
         else:
-            print(f"   🔄 Samtale-kontekst: {len(history)} beskeder")
+            source_prefix = f"[PRIMÆRKILDE - '{title}', {year}]"
+        
+        source_lines.append(f"{source_prefix}\n{text}")
+    
+    context = "\n\n".join(source_lines)
+    
+    # Gemini hint (valgfritt)
+    gemini_summary = ""
+    if gemini_model:
+        try:
+            gemini_prompt = f"""Læs disse kilder og find Kay Fiskers VURDERINGER og HOLDNINGER relevant for spørgsmålet.
+
+KILDER:
+{context}
+
+SPØRGSMÅL: {user_prompt}
+
+Svar på dansk. List 3-5 punkter. Fokusér på:
+- Fiskers personlige vurderinger
+- Konkrete sammenligninger
+- Sociale/ideologiske synspunkter
+- Specifikke bygninger med årstal"""
+
+            response = gemini_model.generate_content(gemini_prompt)
+            gemini_summary = response.text.strip()
+        except Exception as e:
+            print(f"   ⚠️ Gemini fejlede: {e}")
+    
+    # Generer svar
+    hint_section = f"\n### NØGLEPUNKTER ###\n{gemini_summary}\n### SLUT ###\n" if gemini_summary else ""
+    
+    lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
+Du svarer på dansk baseret på kildematerialet.
+
+### ARKIVKILDER ###
+{context}
+### SLUT KILDER ###
+{hint_section}
+KILDEPRIORITET:
+1. PRIMÆRE KILDER (dine egne skrifter før 1965) - brug disse FØRST
+2. Sekundære kilder (skrevet OM dig efter 1965) - kun for kontekst
+
+Svar på dansk i 3-5 sætninger. Vær konkret og vurderende.
+
+Spørgsmål: {user_prompt}
+
+Kay Fisker:"""
+    
+    result = pipe(
+        lora_prompt,
+        max_new_tokens=400,
+        temperature=0.40,
+        top_p=0.88,
+        top_k=45,
+        repetition_penalty=1.22,
+        do_sample=True
+    )
+    
+    generated_text = result[0]["generated_text"].split("Kay Fisker:")[-1].strip()
+    generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK|FAKTA).*", "", generated_text, flags=re.MULTILINE).strip()
+    generated_text = re.sub(r"\n+", " ", generated_text).strip()
+    
+    # Bygg FULLSTENDIG strata med ALL metadata
+    full_sources = []
+    for i, m in enumerate(matches):
+        full_text = m["metadata"].get("text", "")
+        
+        # Detaljert segment-analyse
+        segment_analysis = await run_in_threadpool(
+            detailed_segment_analysis, 
+            full_text, 
+            generated_text
+        )
+        
+        full_sources.append({
+            "id": f"source_{i}",
+            "full_text": full_text,  # HELE teksten - ingen trunkering
+            "metadata": {
+                "year": m["metadata"].get("year"),
+                "author": m["metadata"].get("author", "Kay Fisker"),
+                "title": m["metadata"].get("title", "Ukjent kilde"),
+                "source_type": m["metadata"].get("source_type", "arkiv"),
+                "publication": m["metadata"].get("publication"),
+                "page": m["metadata"].get("page"),
+                "namespace": m["metadata"].get("__ns"),
+                "pinecone_score": m.get("score", 0.0),
+                "rerank_score": m.get("rerank_score", 0.0)
+            },
+            "segment_analysis": segment_analysis,
+            "ref": f"{m['metadata'].get('author', 'Kay Fisker')} ({m['metadata'].get('year', 'Arkiv')})",
+            "type": m["metadata"].get("__ns", "primary").upper()
+        })
+    
+    # Respons-komposisjon: hvilke setninger kommer fra hvilke kilder
+    response_composition = await run_in_threadpool(
+        analyze_response_composition,
+        generated_text,
+        full_sources
+    )
+    
+    # Genealogisk analyse
+    strata_for_genealogy = [{
+        "id": s["id"],
+        "text": s["full_text"],
+        "ref": s["ref"],
+        "year": s["metadata"]["year"],
+        "type": s["type"]
+    } for s in full_sources]
+    
+    genealogy = await run_in_threadpool(
+        perform_full_genealogical_analysis, 
+        strata_for_genealogy, 
+        generated_text, 
+        user_prompt
+    )
+    
+    # Track kildebruk
+    track_source_usage(
+        [{**s["metadata"], "id": s["id"], "excerpt_relevance": s["segment_analysis"].get("statistics", {}).get("max_similarity", 0)} for s in full_sources],
+        user_prompt,
+        generated_text
+    )
+    
+    return {
+        "response": generated_text,
+        "full_sources": full_sources,
+        "response_composition": response_composition,
+        "search_log": search_log,
+        "genealogy": genealogy,
+        "gemini_hint": gemini_summary,
+        "timestamp": datetime.now().isoformat(),
+        "version": "v10.16-research"
+    }
+
+
+@app.get("/source-analytics")
+async def get_source_analytics():
+    """
+    Returnerer aggregert statistikk over kildebruk.
+    For å identifisere hvilke kilder som dominerer/mangler.
+    """
+    sorted_sources = sorted(
+        source_frequency_db.items(), 
+        key=lambda x: x[1]["count"], 
+        reverse=True
+    )
+    
+    # Beregn statistikk
+    total_queries = len(query_history)
+    unique_sources = len(source_frequency_db)
+    
+    # Kilder som aldri brukes (må sjekkes mot Pinecone)
+    # For nå: kilder med lav frekvens
+    underused = [
+        {"id": sid, **sdata}
+        for sid, sdata in source_frequency_db.items()
+        if sdata["count"] == 1
+    ]
+    
+    # Mest siterte
+    top_cited = [
+        {
+            "id": sid,
+            "title": sdata.get("title"),
+            "author": sdata.get("author"),
+            "year": sdata.get("year"),
+            "namespace": sdata.get("namespace"),
+            "citation_count": sdata["count"],
+            "avg_score": sdata.get("avg_score", 0),
+            "avg_attribution": sdata.get("avg_attribution", 0),
+            "first_seen": sdata.get("first_seen"),
+            "last_seen": sdata.get("last_seen")
+        }
+        for sid, sdata in sorted_sources[:25]
+    ]
+    
+    # Fordeling per namespace
+    namespace_distribution = defaultdict(int)
+    for sid, sdata in source_frequency_db.items():
+        ns = sdata.get("namespace", "unknown")
+        namespace_distribution[ns] += sdata["count"]
+    
+    # Fordeling per tiår
+    decade_distribution = defaultdict(int)
+    for sid, sdata in source_frequency_db.items():
+        year = sdata.get("year")
+        if year:
+            try:
+                decade = (int(year) // 10) * 10
+                decade_distribution[decade] += sdata["count"]
+            except:
+                pass
+    
+    return {
+        "summary": {
+            "total_queries": total_queries,
+            "unique_sources_cited": unique_sources,
+            "total_citations": sum(s["count"] for s in source_frequency_db.values())
+        },
+        "top_cited_sources": top_cited,
+        "underused_sources": underused[:10],
+        "namespace_distribution": dict(namespace_distribution),
+        "decade_distribution": dict(sorted(decade_distribution.items())),
+        "query_history_sample": query_history[-10:]  # Siste 10 queries
+    }
+
+
+@app.get("/export-session")
+async def export_session():
+    """
+    Eksporter all data fra denne sesjonen for videre analyse.
+    """
+    return {
+        "exported_at": datetime.now().isoformat(),
+        "source_frequency": dict(source_frequency_db),
+        "query_history": query_history,
+        "total_queries": len(query_history),
+        "unique_sources": len(source_frequency_db)
+    }
+
+
+@app.post("/compare-sources")
+async def compare_sources(req: Request):
+    """
+    Sammenlign to eller flere kilder direkte.
+    """
+    data = await req.json()
+    source_ids = data.get("source_ids", [])
+    
+    if len(source_ids) < 2:
+        return JSONResponse({"error": "Trenger minst 2 kilder"}, 400)
+    
+    # Hent kilder fra frequency_db
+    sources_to_compare = []
+    for sid in source_ids:
+        if sid in source_frequency_db:
+            sources_to_compare.append({
+                "id": sid,
+                **source_frequency_db[sid]
+            })
+    
+    if len(sources_to_compare) < 2:
+        return JSONResponse({"error": "Fant ikke nok kilder"}, 400)
+    
+    # TODO: Implementer faktisk sammenligning med embeddings
+    # For nå: returner metadata-sammenligning
+    
+    return {
+        "sources": sources_to_compare,
+        "comparison": {
+            "citation_counts": {s["id"]: s["count"] for s in sources_to_compare},
+            "avg_scores": {s["id"]: s.get("avg_score", 0) for s in sources_to_compare},
+            "years": {s["id"]: s.get("year") for s in sources_to_compare}
+        }
+    }
+
+
+# --- STANDARD API ENDPOINT (beholder for bakoverkompatibilitet) ---
+
+@app.post("/chat")
+async def api_chat(req: Request):
+    """Standard chat-endpoint (v10.15-kompatibel)"""
+    data = await req.json()
+    user_prompt = data.get("message", "")
+    history = data.get("history", [])
+    
+    if len(user_prompt.strip()) < 3:
+        return JSONResponse({"error": "Spørgsmål for kort"}, 400)
+    
+    search_query = user_prompt
+    if history and len(history) >= 2:
+        last_response = history[-1].get("content", "") if history[-1].get("role") == "assistant" else ""
+        keywords = re.findall(r'\b[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)?\b', last_response)
+        keywords = list(set(keywords))[:5]
+        if keywords:
+            search_query = f"{user_prompt} {' '.join(keywords)}"
     
     matches = pinecone_search_logic(search_query, total_results=8)
     
@@ -904,13 +1473,8 @@ async def api_chat(req: Request):
             "state": "FRAKOBLET",
             "intensity": 0.0,
             "genealogy": {},
-            "version": "v10.15"
+            "version": "v10.16"
         }, 200)
-    
-    # =====================================================
-    # v10.14: GEMINI SOM ASSISTENT, IKKE PORTVAKT
-    # Begge modeller ser kildene - Gemini hjælper med fokus
-    # =====================================================
     
     # Bygg kilde-kontekst
     source_lines = []
@@ -934,9 +1498,7 @@ async def api_chat(req: Request):
     
     context = "\n\n".join(source_lines)
     
-    # =====================================================
-    # TRINN 1: GEMINI LAGER FAKTA-HINT (valgfrit hjælpemiddel)
-    # =====================================================
+    # Gemini hint
     gemini_summary = ""
     if gemini_model:
         try:
@@ -947,50 +1509,23 @@ KILDER:
 
 SPØRGSMÅL: {user_prompt}
 
-Svar på dansk. List 3-5 punkter. Fokusér på:
-- Fiskers personlige vurderinger ("forekommer mig", "det fineste exempel", "jeg finder")
-- Konkrete sammenligninger han laver mellem bygninger/arkitekter
-- Hans sociale/ideologiske synspunkter på arkitektur
-- Specifikke bygninger han nævner med årstal
-
-List IKKE tekniske detaljer som etager, materialer, priser medmindre de er del af en vurdering."""
+Svar på dansk. List 3-5 punkter."""
 
             response = gemini_model.generate_content(gemini_prompt)
             gemini_summary = response.text.strip()
-            print(f"   ✅ Gemini-hint: {gemini_summary[:100]}...")
         except Exception as e:
-            print(f"   ⚠️ Gemini fejlede (fortsætter uden): {e}")
-            gemini_summary = ""
+            print(f"   ⚠️ Gemini fejlede: {e}")
     
-    # =====================================================
-    # TRINN 2: MISTRAL+LORA - v10.15 KOMBINERT PROMPT
-    # Arkitektur fra v10.14 + struktur fra v10.6
-    # =====================================================
-    
-    # Bygg hint-sektion hvis Gemini gav noget
-    hint_section = ""
-    if gemini_summary:
-        hint_section = f"""
-### NØGLEPUNKTER (fra kilderne) ###
-{gemini_summary}
-### SLUT NØGLEPUNKTER ###
-"""
-    
-    # NY: Byg samtalehistorik-sektion
+    hint_section = f"\n### NØGLEPUNKTER ###\n{gemini_summary}\n### SLUT ###\n" if gemini_summary else ""
     history_section = ""
     if history and len(history) >= 2:
-        # Inkluder de sidste 2-4 beskeder for kontekst
         recent_history = history[-4:] if len(history) >= 4 else history
         history_lines = []
         for h in recent_history:
             role = "Spørgsmål" if h.get("role") == "user" else "Dit svar"
-            content = h.get("content", "")[:300]  # Begræns længde
+            content = h.get("content", "")[:300]
             history_lines.append(f"{role}: {content}")
-        history_section = f"""
-### TIDLIGERE I SAMTALEN ###
-{chr(10).join(history_lines)}
-### SLUT SAMTALE ###
-"""
+        history_section = f"\n### TIDLIGERE I SAMTALEN ###\n{chr(10).join(history_lines)}\n### SLUT SAMTALE ###\n"
     
     lora_prompt = f"""Du er Kay Fisker (1893–1965), dansk arkitekt og professor.
 Du svarer på dansk baseret på kildematerialet.
@@ -1027,7 +1562,6 @@ Spørgsmål: {user_prompt}
 
 Kay Fisker:"""
     
-    # Generér med LoRA
     result = pipe(
         lora_prompt,
         max_new_tokens=400,
@@ -1042,7 +1576,7 @@ Kay Fisker:"""
     generated_text = re.sub(r"^(System:|Spørgsmål:|###|HUSK:|KRITISK|FAKTA).*", "", generated_text, flags=re.MULTILINE).strip()
     generated_text = re.sub(r"\n+", " ", generated_text).strip()
     
-    # Bygg strata med FULL metadata for frontend
+    # Bygg strata
     strata = []
     for i, m in enumerate(matches):
         full_text = m["metadata"].get("text", "")
@@ -1055,7 +1589,6 @@ Kay Fisker:"""
             85
         )
         
-        # v10.11: Mer metadata for Arbejdsbord
         strata.append({
             "id": f"source_{i}",
             "text": full_text,
@@ -1066,12 +1599,11 @@ Kay Fisker:"""
             "year": m["metadata"].get("year"),
             "type": m["metadata"].get("__ns", "primary").upper(),
             "score": m.get("score", 0.0),
-            # NY METADATA for frontend
             "title": m["metadata"].get("title", "Ukjent kilde"),
             "author": m["metadata"].get("author", "Kay Fisker"),
             "source_type": m["metadata"].get("source_type", "arkiv"),
-            "publication": m["metadata"].get("publication", None),
-            "page": m["metadata"].get("page", None),
+            "publication": m["metadata"].get("publication"),
+            "page": m["metadata"].get("page"),
         })
 
     genealogy = await run_in_threadpool(
@@ -1080,6 +1612,9 @@ Kay Fisker:"""
         generated_text, 
         user_prompt
     )
+    
+    # Track kildebruk
+    track_source_usage(strata, user_prompt, generated_text)
     
     visuals = extract_visuals(generated_text)
     
@@ -1104,9 +1639,10 @@ Kay Fisker:"""
         "state": state,
         "intensity": min(len(strata)/8, 1.0),
         "genealogy": genealogy,
-        "version": "v10.15",
+        "version": "v10.16",
         "model": "mixtral-8x7b" if USE_MIXTRAL else "mistral-7b-lora"
     }
+
 
 @app.get("/tts")
 async def get_tts(text: str):
@@ -1116,6 +1652,7 @@ async def get_tts(text: str):
     sf.write("static/tts_output.wav", out["audio"], out["sampling_rate"])
     return FileResponse("static/tts_output.wav", media_type="audio/wav")
 
+
 @app.get("/", response_class=HTMLResponse)
 async def root_view():
     try:
@@ -1124,7 +1661,9 @@ async def root_view():
     except:
         return HTMLResponse(content="<h1>static/index.html ikke funnet</h1>")
 
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 if __name__ == "__main__":
     import uvicorn
