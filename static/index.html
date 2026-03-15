@@ -8,10 +8,10 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body className="bg-[#f2f2f2] selection:bg-red-200 overflow-hidden">
+<body className="bg-[#f2f2f2] selection:bg-stone-200 overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -58,10 +58,10 @@
             });
 
             const rams = {
-                red: "rgba(227, 34, 25, 0.7)",
-                blue: "rgba(0, 107, 180, 0.7)",
-                orange: "rgba(255, 160, 0, 0.6)",
-                green: "rgba(34, 197, 94, 0.6)"
+                red: "rgba(120, 113, 108, 0.6)",
+                blue: "rgba(100, 116, 139, 0.6)",
+                orange: "rgba(146, 130, 108, 0.5)",
+                green: "rgba(120, 140, 120, 0.5)"
             };
 
             const addLog = (msg) => {
@@ -208,7 +208,7 @@
                             newStrata.push({
                                 ...s,
                                 pos: getSmartPosition(s.year, newStrata),
-                                color: s.type === "PRIMARY" ? rams.blue : 
+                                color: s.type === "PRIMARY" ? rams.blue :
                                        s.type === "QUOTES" ? rams.orange : rams.red
                             });
                         });
@@ -259,11 +259,10 @@
                                 onClick={() => spawnVisual(match)}
                                 className={`cursor-pointer transition-all border-b-2 font-medium mx-0.5 px-1 rounded-sm ${
                                     isActive 
-                                        ? 'border-blue-500 text-blue-700 bg-blue-50' 
-                                        : 'border-dashed border-gray-400 text-gray-700 hover:border-blue-400 hover:bg-blue-50/50'
+                                        ? 'border-stone-500 text-stone-700 bg-stone-100'
+                                        : 'border-dashed border-stone-300 text-stone-600 hover:border-stone-400 hover:bg-stone-50'
                                 }`}
-                                title="Klik for å projisere bilde">
-                                <LucideIcon name="image" size={14} className="inline mr-1 mb-0.5 opacity-50" />
+                                title="Klik for at vise billede">
                                 {part}
                             </span>
                         );
@@ -338,8 +337,8 @@
                                 return (
                                     <span key={i} className={`${
                                         isDirect 
-                                            ? 'bg-sky-100 text-stone-900 font-medium border-b-2 border-sky-400' 
-                                            : 'bg-stone-50 text-stone-800 border-b border-stone-300'
+                                            ? 'bg-stone-100 text-stone-800 font-medium border-b-2 border-stone-400'
+                                            : 'bg-stone-50 text-stone-700 border-b border-stone-300'
                                     } px-1 mr-1`}>
                                         {sentence}
                                     </span>
@@ -563,41 +562,13 @@
                             <line 
                                 x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
                                 x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="1.5"
-                                strokeDasharray="6,4" opacity="0.4"
-                            />
-                            {/* Animert puls som beveger seg langs linjen */}
-                            <line 
-                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
-                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="3"
-                                strokeDasharray="20,200" 
-                                opacity="0.6"
-                                style={{ 
-                                    filter: 'blur(2px)',
-                                    animation: `dash-flow-${i} 3s linear infinite`
-                                }}
-                            />
-                            <style>{`
-                                @keyframes dash-flow-${i} {
-                                    0% { stroke-dashoffset: 220; opacity: 0; }
-                                    10% { opacity: 0.8; }
-                                    90% { opacity: 0.8; }
-                                    100% { stroke-dashoffset: 0; opacity: 0; }
-                                }
-                            `}</style>
-                            {/* Subtil glow - veldig nedtonet */}
-                            <line 
-                                x1={`${prev.pos.x}%`} y1={`${prev.pos.y}%`}
-                                x2={`${node.pos.x}%`} y2={`${node.pos.y}%`}
-                                stroke="#0ea5e9" strokeWidth="6"
-                                opacity="0.04"
-                                style={{ filter: 'blur(4px)' }}
+                                stroke="#78716c" strokeWidth="1.5"
+                                strokeDasharray="6,4" opacity="0.3"
                             />
                             {/* Tidslinje-indikator */}
                             <circle 
                                 cx={`${midX}%`} cy={`${midY}%`} r="2.5"
-                                fill="#0ea5e9" opacity="0.6"
+                                fill="#78716c" opacity="0.4"
                             />
                         </g>
                     );
@@ -607,8 +578,8 @@
             return (
                 <div className="h-screen w-screen flex flex-col relative bg-[#f2f2f2] font-sans overflow-hidden">
                     <style>{`
-                        body { font-family: 'Inter', sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
-                        .serif { font-family: 'Libre Baskerville', serif; }
+                        body { font-family: 'Inter', -apple-system, system-ui, sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
+                        .serif { font-family: 'Inter', -apple-system, system-ui, sans-serif; font-weight: 400; }
                         .mono { font-family: 'IBM Plex Mono', monospace; }
                         
                         /* Prevent copying of blurred text */
@@ -672,17 +643,17 @@
                     <header className="h-12 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/20 backdrop-blur-md">
                         <div className="flex items-center gap-6">
                             <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 bg-[#e32219] flex items-center justify-center text-white font-black text-[10px]">F</div>
-                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.4</h1>
+                                <div className="w-5 h-5 bg-stone-600 flex items-center justify-center text-white font-semibold text-[10px] rounded-sm">F</div>
+                                <h1 className="text-[11px] font-medium uppercase tracking-[0.3em] text-stone-600">Kay Fisker Arkiv</h1>
                             </div>
-                            <span className={`text-[10px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-blue-500 animate-pulse' : 'text-gray-400'}`}>{discursiveState}</span>
+                            <span className={`text-[10px] font-medium tracking-widest uppercase ${isSynthesizing ? 'text-stone-500 animate-pulse' : 'text-stone-400'}`}>{discursiveState}</span>
                             
                             {genealogy?.epistemic_levels && (
                                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-100/80">
                                     <span className={`text-[9px] mono font-medium tracking-wide ${
-                                        genealogy.epistemic_levels.primary_level === 'ARKIVFAKTA' ? 'text-emerald-700' :
-                                        genealogy.epistemic_levels.primary_level === 'ARKIV-NÆR TOLKNING' ? 'text-sky-700' :
-                                        'text-amber-700'
+                                        genealogy.epistemic_levels.primary_level === 'ARKIVFAKTA' ? 'text-stone-600' :
+                                        genealogy.epistemic_levels.primary_level === 'ARKIV-NÆR TOLKNING' ? 'text-stone-500' :
+                                        'text-stone-400'
                                     }`}>
                                         {genealogy.epistemic_levels.primary_level}
                                     </span>
@@ -694,7 +665,7 @@
                             <button 
                                 onClick={() => setShowGenealogy(!showGenealogy)}
                                 className={`px-3 py-1.5 rounded-full text-[9px] mono font-medium tracking-wide transition-all ${
-                                    showGenealogy ? 'bg-stone-700 text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                                    showGenealogy ? 'bg-stone-500 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
                                 }`}>
                                 Genealogi
                             </button>
@@ -711,7 +682,7 @@
                         
                         {isSynthesizing && (
                             <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
-                                <div className="w-[50vh] h-[50vh] rounded-full blur-[100px] bg-gradient-to-tr from-blue-400 to-cyan-200 opacity-20 animate-breathe"></div>
+                                <div className="w-[50vh] h-[50vh] rounded-full blur-[100px] bg-gradient-to-tr from-stone-400 to-stone-200 opacity-15 animate-breathe"></div>
                             </div>
                         )}
 
@@ -741,7 +712,7 @@
                             {visualNodes.map((v, i) => ( 
                                 <path key={`vis-link-${i}`} 
                                     d={`M ${viewport.w / 2} ${viewport.h - 140} Q ${v.pos.x * viewport.w / 100} ${viewport.h - 50} ${v.pos.x * viewport.w / 100} ${v.pos.y * viewport.h / 100}`}
-                                    stroke="#3b82f6" strokeWidth="1.5" fill="none" 
+                                    stroke="#a8a29e" strokeWidth="1" fill="none" 
                                     className="visual-line opacity-50" 
                                 /> 
                             ))}
@@ -749,7 +720,7 @@
                             {selectedSources.length > 1 && selectedSources.map((s, i) => {
                                 const next = selectedSources[i + 1];
                                 if (!next) return null;
-                                return <line key={`link-${i}`} x1={`${s.pos.x}%`} y1={`${s.pos.y}%`} x2={`${next.pos.x}%`} y2={`${next.pos.y}%`} stroke="#0ea5e9" strokeWidth="2" opacity="0.5" />;
+                                return <line key={`link-${i}`} x1={`${s.pos.x}%`} y1={`${s.pos.y}%`} x2={`${next.pos.x}%`} y2={`${next.pos.y}%`} stroke="#a8a29e" strokeWidth="1.5" opacity="0.4" />;
                             })}
 
                             {activeStrata.map((s, i) => (hoveredSource === s.id || selectedSources.find(ss => ss.id === s.id)) && ( 
@@ -797,26 +768,26 @@
                                             transform: 'translate(-50%, -50%)', 
                                             borderColor: (hoveredSource === s.id || isSelected || isInGenealogy) ? s.color : 'rgba(0,0,0,0.05)',
                                             cursor: isDragging ? 'grabbing' : 'move',
-                                            boxShadow: isInGenealogy && !isSelected ? '0 8px 25px rgba(14, 165, 233, 0.3)' : undefined
+                                            boxShadow: isInGenealogy && !isSelected ? '0 8px 25px rgba(120, 113, 108, 0.2)' : undefined
                                         }}>
                                         <div className="flex justify-between items-center mb-3">
                                             <span className="text-[10px] mono font-medium uppercase tracking-wider" style={{ color: s.color }}>
                                                 {s.type}
                                             </span>
                                             <div className="flex items-center gap-2">
-                                                {hasAttribution && <div className="w-2 h-2 rounded-full bg-sky-500" title="Brukt i svar"></div>}
-                                                {isSelected && <LucideIcon name="check-circle" size={14} className="text-green-600" />}
+                                                {hasAttribution && <div className="w-2 h-2 rounded-full bg-stone-400" title="Brugt i svar"></div>}
+                                                {isSelected && <LucideIcon name="check-circle" size={14} className="text-stone-500" />}
                                                 <span className="text-[10px] mono text-gray-400">#{s.year || '?'}</span>
                                             </div>
                                         </div>
-                                        <p className={`serif italic transition-all duration-500 leading-relaxed ${
-                                            hoveredSource === s.id || isSelected ? 'text-[15px] text-black' : 'text-[13px] text-gray-600'
+                                        <p className={`transition-all duration-500 leading-relaxed ${
+                                            hoveredSource === s.id || isSelected ? 'text-[13px] text-stone-800' : 'text-[12px] text-stone-500'
                                         }`}>
-                                            "{displayText.substring(0, textLength)}{displayText.length > textLength ? '...' : ''}"
+                                            {displayText.substring(0, textLength)}{displayText.length > textLength ? '...' : ''}
                                         </p>
                                         {s.excerpt_relevance && s.excerpt_relevance > 0.5 && !isSelected && (
-                                            <div className="mt-3 text-[9px] mono text-sky-600 opacity-60" title={s.excerpt_explanation}>
-                                                ↗ {Math.round(s.excerpt_relevance * 100)}%
+                                            <div className="mt-3 text-[9px] mono text-stone-400" title={s.excerpt_explanation}>
+                                                {Math.round(s.excerpt_relevance * 100)}% relevans
                                             </div>
                                         )}
                                     </div>
@@ -831,7 +802,7 @@
                                     className="visual-node absolute w-40 h-32 pointer-events-auto cursor-zoom-in hover:scale-110 transition-all duration-500 bg-white" 
                                     style={{ left: `${v.pos.x}%`, top: `${v.pos.y}%` }}>
                                     <img src={v.url} className="w-full h-full object-cover" alt={v.keyword} />
-                                    <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] p-1.5 mono backdrop-blur-sm">{v.keyword}</div>
+                                    <div className="absolute bottom-0 left-0 right-0 bg-white/80 text-stone-600 text-[10px] p-1.5 mono backdrop-blur-sm border-t border-stone-200">{v.keyword}</div>
                                 </div>
                             ))}
                         </div>
@@ -843,7 +814,7 @@
                             <div className="relative max-w-4xl max-h-[80vh] bg-white p-2 shadow-2xl rounded-sm border border-gray-200">
                                 <img src={expandedVisual.url} className="max-h-[75vh] w-auto object-contain" alt={expandedVisual.keyword} />
                                 <div className="absolute -bottom-10 left-0 text-black">
-                                    <h3 className="text-xl serif italic">{expandedVisual.keyword}</h3>
+                                    <h3 className="text-lg font-medium text-stone-800">{expandedVisual.keyword}</h3>
                                     <p className="text-[10px] mono text-gray-500">Arkivmateriale // {expandedVisual.type}</p>
                                 </div>
                                 <button className="absolute -top-12 right-0 text-black hover:text-red-500 text-[10px] uppercase font-bold tracking-widest flex items-center gap-2">
@@ -907,9 +878,9 @@
                                                 </div>
                                                 {attr && (
                                                     <span className={`text-[9px] mono px-2 py-1 rounded ${
-                                                        attr.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
-                                                        attr.confidence === 'medium' ? 'bg-sky-100 text-sky-700' :
-                                                        'bg-amber-100 text-amber-700'
+                                                        attr.confidence === 'high' ? 'bg-stone-200 text-stone-700' :
+                                                        attr.confidence === 'medium' ? 'bg-stone-100 text-stone-600' :
+                                                        'bg-stone-50 text-stone-500'
                                                     }`}>
                                                         {attr.epistemic_level}
                                                     </span>
@@ -926,7 +897,7 @@
                                             </div>
                                             
                                             {/* Brukte utdrag */}
-                                            <div className="serif text-[15px] leading-relaxed text-stone-800">
+                                            <div className="text-[13px] leading-relaxed text-stone-700">
                                                 {getHighlightedText(s.text, syntheticResponse, s.ref)}
                                             </div>
                                             
@@ -938,7 +909,7 @@
                                             
                                             {/* Link til full kilde */}
                                             <div className="pt-3 border-t border-stone-200">
-                                                <button className="text-[10px] mono text-sky-600 hover:text-sky-800 flex items-center gap-1">
+                                                <button className="text-[10px] mono text-stone-500 hover:text-stone-700 flex items-center gap-1">
                                                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                                                     </svg>
@@ -993,7 +964,7 @@
                                                                             </span>
                                                                         )}
                                                                     </div>
-                                                                    <div className="text-[11px] text-stone-600 serif italic">
+                                                                    <div className="text-[11px] text-stone-500">
                                                                         {shift.source_a} ↔ {shift.source_b}
                                                                     </div>
                                                                     <div className="mt-2 flex items-center gap-2">
@@ -1019,28 +990,28 @@
                                         {selectedConcept && genealogy.concept_genealogies?.[selectedConcept] && (
                                             <div className="space-y-4">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
-                                                    <div className="w-1 h-4 bg-sky-600"></div>
-                                                    <span className="serif italic">"{selectedConcept}"</span> over tid
+                                                    <div className="w-1 h-4 bg-stone-500"></div>
+                                                    "{selectedConcept}" over tid
                                                 </h3>
                                                 
                                                 <div className="relative pl-8">
                                                     {/* Vertikal tidslinje */}
-                                                    <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-sky-200"></div>
+                                                    <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-stone-200"></div>
                                                     
                                                     {genealogy.concept_genealogies[selectedConcept].occurrences.map((occ, i) => (
                                                         <div key={i} className="relative mb-6 last:mb-0">
                                                             {/* Timeline dot */}
-                                                            <div className="absolute -left-5 top-2 w-4 h-4 rounded-full border-2 border-white bg-sky-600 shadow-md"></div>
+                                                            <div className="absolute -left-5 top-2 w-4 h-4 rounded-full border-2 border-white bg-stone-500 shadow-md"></div>
                                                             
                                                             {/* Content card */}
-                                                            <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-sky-200/40 shadow-sm border-l-2">
-                                                                <div className="text-[12px] font-bold text-sky-900 mono mb-2">
+                                                            <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-stone-200/40 shadow-sm border-l-2">
+                                                                <div className="text-[12px] font-semibold text-stone-700 mono mb-2">
                                                                     {occ.year}
                                                                 </div>
                                                                 <div className="text-[10px] text-stone-500 mono mb-2">
                                                                     {occ.source_ref}
                                                                 </div>
-                                                                <p className="text-[13px] serif italic text-stone-700 leading-relaxed">
+                                                                <p className="text-[12px] text-stone-600 leading-relaxed">
                                                                     "...{occ.context}..."
                                                                 </p>
                                                             </div>
@@ -1050,8 +1021,8 @@
                                                 
                                                 {/* Semantic drift summary */}
                                                 {genealogy.concept_genealogies[selectedConcept].semantic_drift?.length > 0 && (
-                                                    <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-sky-200/40 shadow-sm">
-                                                        <div className="text-[10px] font-bold text-sky-900 mono mb-3">
+                                                    <div className="bg-white/60 backdrop-blur-md p-4 rounded-sm border border-stone-200/40 shadow-sm">
+                                                        <div className="text-[10px] font-semibold text-stone-700 mono mb-3">
                                                             Semantisk bevegelse
                                                         </div>
                                                         <div className="space-y-2">
@@ -1060,10 +1031,10 @@
                                                                     <span className="text-[11px] mono text-stone-600">
                                                                         {drift.from_year} → {drift.to_year}
                                                                     </span>
-                                                                    <div className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                                                        drift.interpretation === 'STABLE' ? 'bg-stone-100 text-stone-700' :
-                                                                        drift.interpretation === 'SHIFTING' ? 'bg-sky-100 text-sky-700' :
-                                                                        'bg-stone-800 text-white'
+                                                                    <div className={`px-2 py-0.5 rounded-full text-[9px] font-medium ${
+                                                                        drift.interpretation === 'STABLE' ? 'bg-stone-100 text-stone-600' :
+                                                                        drift.interpretation === 'SHIFTING' ? 'bg-stone-200 text-stone-700' :
+                                                                        'bg-stone-600 text-white'
                                                                     }`}>
                                                                         {drift.interpretation === 'STABLE' ? 'Stabil' :
                                                                          drift.interpretation === 'SHIFTING' ? 'Endring' : 'Radikalt'}
@@ -1080,7 +1051,7 @@
                                         {genealogy.power_knowledge && (
                                             <div className="space-y-3">
                                                 <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
-                                                    <div className="w-1 h-4 bg-blue-500"></div>
+                                                    <div className="w-1 h-4 bg-stone-400"></div>
                                                     Kildefordeling
                                                 </h3>
                                                 
@@ -1090,13 +1061,13 @@
                                                         <div>
                                                             <div className="flex justify-between items-center mb-1">
                                                                 <span className="text-[10px] mono text-stone-600">Primærkilder</span>
-                                                                <span className="text-[11px] font-bold text-blue-700 mono">
+                                                                <span className="text-[11px] font-semibold text-stone-600 mono">
                                                                     {genealogy.power_knowledge.hierarchy.PRIMARY}
                                                                 </span>
                                                             </div>
                                                             <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
                                                                 <div 
-                                                                    className="h-full bg-blue-500"
+                                                                    className="h-full bg-stone-500"
                                                                     style={{ 
                                                                         width: `${(genealogy.power_knowledge.hierarchy.PRIMARY / 
                                                                             (genealogy.power_knowledge.hierarchy.PRIMARY + 
@@ -1110,13 +1081,13 @@
                                                         <div>
                                                             <div className="flex justify-between items-center mb-1">
                                                                 <span className="text-[10px] mono text-stone-600">Sitater</span>
-                                                                <span className="text-[11px] font-bold text-amber-700 mono">
+                                                                <span className="text-[11px] font-semibold text-stone-500 mono">
                                                                     {genealogy.power_knowledge.hierarchy.QUOTES}
                                                                 </span>
                                                             </div>
                                                             <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
                                                                 <div 
-                                                                    className="h-full bg-amber-500"
+                                                                    className="h-full bg-stone-400"
                                                                     style={{ 
                                                                         width: `${(genealogy.power_knowledge.hierarchy.QUOTES / 
                                                                             (genealogy.power_knowledge.hierarchy.PRIMARY + 
@@ -1130,7 +1101,7 @@
                                                         <div>
                                                             <div className="flex justify-between items-center mb-1">
                                                                 <span className="text-[10px] mono text-stone-600">Sekundærkilder</span>
-                                                                <span className="text-[11px] font-bold text-stone-700 mono">
+                                                                <span className="text-[11px] font-semibold text-stone-400 mono">
                                                                     {genealogy.power_knowledge.hierarchy.SECONDARY}
                                                                 </span>
                                                             </div>
@@ -1150,7 +1121,7 @@
                                                     
                                                     <div className="pt-3 mt-3 border-t border-stone-200">
                                                         <div className="text-[10px] mono text-stone-500 mb-1">Dominant diskurs</div>
-                                                        <div className="text-[12px] serif italic text-stone-800">{genealogy.power_knowledge.dominant_discourse}</div>
+                                                        <div className="text-[12px] text-stone-700">{genealogy.power_knowledge.dominant_discourse}</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1166,11 +1137,11 @@
                         <div className="glass-membrane rounded-[2rem] p-8 transition-all duration-700 hover:shadow-2xl">
                             <div className="relative">
                                 <textarea 
-                                    value={documentText} 
-                                    onChange={e => setDocumentText(e.target.value)} 
-                                    onKeyDown={handleKeyPress} 
-                                    placeholder="Indtast genealogisk spørgsmål..." 
-                                    className={`w-full text-[16px] serif leading-relaxed text-black border-none outline-none p-0 placeholder-black/20 resize-none bg-transparent h-[60px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
+                                    value={documentText}
+                                    onChange={e => setDocumentText(e.target.value)}
+                                    onKeyDown={handleKeyPress}
+                                    placeholder="Stil et sporgsmal om Kay Fisker..."
+                                    className={`w-full text-[14px] leading-relaxed text-stone-800 border-none outline-none p-0 placeholder-stone-300 resize-none bg-transparent h-[60px] transition-all ${isSynthesizing ? 'opacity-20' : 'opacity-100'}`}
                                     spellCheck="false" 
                                 />
                                 <div className="flex justify-end mt-2 gap-2">
@@ -1193,7 +1164,7 @@
                             
                             {syntheticResponse && (
                                 <div className="border-t border-white/20 mt-6 pt-6 animate-in fade-in slide-in-from-bottom-2 duration-1000">
-                                    <div className="text-[21px] serif italic text-gray-900 leading-snug tracking-tight text-center px-2">
+                                    <div className="text-[15px] text-stone-700 leading-relaxed text-left px-2">
                                         {renderResponseWithVisuals(syntheticResponse)}
                                     </div>
                                     <div className="mt-6 flex justify-between items-center text-[9px] mono text-stone-500">
