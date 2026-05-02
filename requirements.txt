@@ -18,3 +18,4 @@ numba
 librosa
 soundfile
 google-generativeai
+httpx

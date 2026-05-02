@@ -1,0 +1,5 @@
+.env
+.env.*
+__pycache__/
+*.pyc
+test_server.py

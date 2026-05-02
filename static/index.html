@@ -8,7 +8,7 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body className="bg-[#f2f2f2] selection:bg-red-200 overflow-hidden">
@@ -66,15 +66,81 @@
                 return params.get('research') === 'true';
             }, []);
 
-            // Banner + modal state
-            const [bannerDismissed, setBannerDismissed] = useState(() => {
-                return sessionStorage.getItem('fisker-banner-dismissed') === 'true';
-            });
+            // Modal + popover state
             const [showAboutModal, setShowAboutModal] = useState(false);
+            const [showInfoPopover, setShowInfoPopover] = useState(false);
 
-            const dismissBanner = () => {
-                setBannerDismissed(true);
-                sessionStorage.setItem('fisker-banner-dismissed', 'true');
+            // Voice / TTS state
+            const [isVoicePlaying, setIsVoicePlaying] = useState(false);
+            const [isVoiceLoading, setIsVoiceLoading] = useState(false);
+            const [voiceAmplitude, setVoiceAmplitude] = useState(0);
+            const audioContextRef = useRef(null);
+            const analyserRef = useRef(null);
+            const animFrameRef = useRef(null);
+            const audioElementRef = useRef(null);
+
+            const stopVoice = () => {
+                if (audioElementRef.current) {
+                    audioElementRef.current.pause();
+                    audioElementRef.current.src = '';
+                }
+                if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+                setIsVoicePlaying(false);
+                setVoiceAmplitude(0);
+            };
+
+            const playVoice = async (text) => {
+                if (isVoicePlaying) { stopVoice(); return; }
+                setIsVoiceLoading(true);
+                try {
+                    const resp = await fetch('/tts-elevenlabs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text })
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json();
+                        addLog(`Stemme-fejl: ${err.error || resp.status}`);
+                        return;
+                    }
+                    const blob = await resp.blob();
+                    const url = URL.createObjectURL(blob);
+
+                    if (!audioContextRef.current) {
+                        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    const ctx = audioContextRef.current;
+                    if (ctx.state === 'suspended') await ctx.resume();
+
+                    const audio = new Audio(url);
+                    audioElementRef.current = audio;
+                    const source = ctx.createMediaElementSource(audio);
+                    const analyser = ctx.createAnalyser();
+                    analyser.fftSize = 256;
+                    analyser.smoothingTimeConstant = 0.8;
+                    source.connect(analyser);
+                    analyser.connect(ctx.destination);
+                    analyserRef.current = analyser;
+
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    const tick = () => {
+                        analyser.getByteFrequencyData(dataArray);
+                        const sum = dataArray.reduce((a, b) => a + b, 0);
+                        const avg = sum / dataArray.length / 255;
+                        setVoiceAmplitude(avg);
+                        animFrameRef.current = requestAnimationFrame(tick);
+                    };
+
+                    audio.onplay = () => { setIsVoicePlaying(true); tick(); };
+                    audio.onended = () => { stopVoice(); URL.revokeObjectURL(url); };
+                    audio.onerror = () => { stopVoice(); addLog('Afspilningsfejl'); URL.revokeObjectURL(url); };
+                    await audio.play();
+                } catch (e) {
+                    addLog(`Stemme-fejl: ${e.message}`);
+                    stopVoice();
+                } finally {
+                    setIsVoiceLoading(false);
+                }
             };
             
             const [viewport, setViewport] = useState({ 
@@ -82,11 +148,16 @@
                 h: typeof window !== 'undefined' ? window.innerHeight : 800 
             });
 
-            const rams = {
+            const rams = researchMode ? {
                 red: "rgba(227, 34, 25, 0.7)",
                 blue: "rgba(0, 107, 180, 0.7)",
                 orange: "rgba(255, 160, 0, 0.6)",
                 green: "rgba(34, 197, 94, 0.6)"
+            } : {
+                red: "rgba(168, 162, 158, 0.5)",
+                blue: "rgba(87, 83, 78, 0.6)",
+                orange: "rgba(168, 162, 158, 0.4)",
+                green: "rgba(120, 113, 108, 0.5)"
             };
 
             const addLog = (msg) => {
@@ -171,10 +242,10 @@
                             
                             if (matchingSeg) {
                                 const bgColor = matchingSeg.similarity > 0.7 
-                                    ? 'bg-emerald-100 border-l-4 border-emerald-500' 
+                                    ? 'bg-sky-100 border-l-4 border-sky-500' 
                                     : matchingSeg.similarity > 0.55 
                                     ? 'bg-sky-100 border-l-4 border-sky-400'
-                                    : 'bg-amber-50 border-l-4 border-amber-300';
+                                    : 'bg-stone-100 border-l-4 border-stone-300';
                                 
                                 return (
                                     <span key={i} className={`${bgColor} px-2 py-0.5 inline-block my-0.5`}>
@@ -205,15 +276,15 @@
                         <div className="space-y-3">
                             {responseComposition.sentence_attributions.map((attr, i) => (
                                 <div key={i} className={`p-3 rounded border-l-4 ${
-                                    attr.attribution_confidence === 'DIREKTE_KILDE' ? 'bg-emerald-50 border-emerald-500' :
-                                    attr.attribution_confidence === 'STERK_INDIKASJON' ? 'bg-sky-50 border-sky-400' :
-                                    attr.attribution_confidence === 'MODERAT_INDIKASJON' ? 'bg-amber-50 border-amber-400' :
+                                    attr.attribution_confidence === 'DIREKTE_KILDE' ? 'bg-sky-50 border-sky-500' :
+                                    attr.attribution_confidence === 'STERK_INDIKASJON' ? 'bg-sky-50/60 border-sky-400' :
+                                    attr.attribution_confidence === 'MODERAT_INDIKASJON' ? 'bg-stone-50 border-stone-400' :
                                     'bg-stone-50 border-stone-300'
                                 }`}>
                                     <p className="text-[12px] serif text-stone-800 mb-2">"{attr.response_sentence}"</p>
                                     <div className="flex items-center justify-between text-[9px] mono">
                                         <span className={`px-2 py-0.5 rounded ${
-                                            attr.attribution_confidence === 'DIREKTE_KILDE' ? 'bg-emerald-200 text-emerald-800' :
+                                            attr.attribution_confidence === 'DIREKTE_KILDE' ? 'bg-sky-200 text-sky-800' :
                                             attr.attribution_confidence === 'STERK_INDIKASJON' ? 'bg-sky-200 text-sky-800' :
                                             'bg-stone-200 text-stone-600'
                                         }`}>{attr.attribution_confidence?.replace(/_/g, ' ')}</span>
@@ -263,10 +334,10 @@
                                 ))}
                             </div>
                             {searchLog.selection_reasoning?.length > 0 && (
-                                <div className="bg-amber-50 p-3 rounded border border-amber-200">
-                                    <div className="text-amber-700 mb-2">Seleksjonsresonnement:</div>
+                                <div className="bg-stone-50 p-3 rounded border border-stone-200">
+                                    <div className="text-stone-600 mb-2">Seleksjonsresonnement:</div>
                                     {searchLog.selection_reasoning.map((step, i) => (
-                                        <div key={i} className="text-amber-900 mb-1">{step.step}. {step.reason} → {step.source}</div>
+                                        <div key={i} className="text-stone-700 mb-1">{step.step}. {step.reason} → {step.source}</div>
                                     ))}
                                 </div>
                             )}
@@ -292,13 +363,13 @@
                                 <div className="text-2xl font-bold text-sky-700">{sourceAnalytics.summary?.total_queries || 0}</div>
                                 <div className="text-[9px] mono text-sky-600">Queries</div>
                             </div>
-                            <div className="bg-emerald-50 p-3 rounded text-center">
-                                <div className="text-2xl font-bold text-emerald-700">{sourceAnalytics.summary?.unique_sources_cited || 0}</div>
-                                <div className="text-[9px] mono text-emerald-600">Unike kilder</div>
+                            <div className="bg-sky-50 p-3 rounded text-center">
+                                <div className="text-2xl font-bold text-sky-700">{sourceAnalytics.summary?.unique_sources_cited || 0}</div>
+                                <div className="text-[9px] mono text-sky-600">Unike kilder</div>
                             </div>
-                            <div className="bg-amber-50 p-3 rounded text-center">
-                                <div className="text-2xl font-bold text-amber-700">{sourceAnalytics.summary?.total_citations || 0}</div>
-                                <div className="text-[9px] mono text-amber-600">Siteringer</div>
+                            <div className="bg-stone-50 p-3 rounded text-center">
+                                <div className="text-2xl font-bold text-stone-700">{sourceAnalytics.summary?.total_citations || 0}</div>
+                                <div className="text-[9px] mono text-stone-600">Siteringer</div>
                             </div>
                         </div>
                         {sourceAnalytics.top_cited_sources?.length > 0 && (
@@ -682,6 +753,7 @@
             };
 
             const resetAll = () => {
+                stopVoice();
                 setDocumentText("");
                 setLastQuery("");
                 setSyntheticResponse("");
@@ -895,9 +967,9 @@
             };
 
             return (
-                <div className="h-screen w-screen flex flex-col relative bg-[#f2f2f2] font-sans overflow-hidden">
+                <div className="h-screen w-screen flex flex-col relative bg-[#f2f2f2] font-mono overflow-hidden">
                     <style>{`
-                        body { font-family: 'Inter', sans-serif; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
+                        body { font-family: 'IBM Plex Mono', monospace; overflow: hidden; background: radial-gradient(circle at center, #fdfdfd 0%, #ebebeb 100%); }
                         .serif { font-family: 'Libre Baskerville', serif; }
                         .mono { font-family: 'IBM Plex Mono', monospace; }
                         
@@ -927,7 +999,7 @@
                         .source-node:hover { scale: 1.01; z-index: 100; background: rgba(255, 255, 255, 0.95) !important; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.15); width: 340px !important; }
                         .source-node.active { border: 2px solid black; box-shadow: 0 20px 60px rgba(0,0,0,0.15); z-index: 50; width: 400px !important; background: rgba(255, 255, 255, 0.95); }
                         .source-node.dragging { opacity: 0.7; cursor: grabbing; z-index: 200; }
-                        .research-border { border: 2px solid #f59e0b !important; box-shadow: 0 0 20px rgba(245, 158, 11, 0.2); }
+                        .research-border { border: 2px solid #0284c7 !important; box-shadow: 0 0 20px rgba(2, 132, 199, 0.15); }
                         
                         .visual-node { border-radius: 4px; overflow: hidden; border: 4px solid white; box-shadow: 0 10px 30px rgba(0,0,0,0.15); opacity: 0; animation: pop-in 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; animation-delay: 1.2s; }
                         @keyframes pop-in { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
@@ -958,102 +1030,107 @@
                         }
                     `}</style>
 
-                    <header className="h-12 border-b border-white/40 flex items-center justify-between px-6 z-50 fixed top-0 w-full bg-white/20 backdrop-blur-md">
-                        <div className="flex items-center gap-6">
-                            <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 bg-[#e32219] flex items-center justify-center text-white font-black text-[10px]">F</div>
-                                <h1 className="text-[11px] font-extrabold uppercase tracking-[0.4em]">Genealogisk Apparat v.10.16</h1>
-                            </div>
-                            <span className={`text-[10px] font-bold tracking-widest uppercase ${isSynthesizing ? 'text-blue-500 animate-pulse' : 'text-gray-400'}`}>{discursiveState}</span>
-                            
-                            {genealogy?.epistemic_levels && (
-                                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-100/80">
-                                    <span className={`text-[9px] mono font-medium tracking-wide ${
-                                        genealogy.epistemic_levels.primary_level === 'ARKIVFAKTA' ? 'text-emerald-700' :
-                                        genealogy.epistemic_levels.primary_level === 'ARKIVNÆR FORTOLKNING' ? 'text-sky-700' :
-                                        'text-amber-700'
-                                    }`}>
-                                        {genealogy.epistemic_levels.primary_level}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                        
-                        <div className="flex items-center gap-4">
-                            {researchAllowed && (
-                                <>
-                                    <button
-                                        onClick={() => setResearchMode(!researchMode)}
-                                        className={`px-4 py-1.5 rounded-full text-[10px] mono font-bold tracking-wide transition-all ${
-                                            researchMode
-                                                ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30'
-                                                : 'bg-stone-100 text-stone-600 hover:bg-amber-100 hover:text-amber-700'
-                                        }`}>
-                                        🔬 Forsker {researchMode ? 'PÅ' : 'AV'}
-                                    </button>
-
-                                    {researchMode && (
-                                        <>
-                                            <button
-                                                onClick={fetchSourceAnalytics}
-                                                className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
-                                                📊 Statistikk
-                                            </button>
-                                            <button
-                                                onClick={exportCurrentAnalysis}
-                                                disabled={!syntheticResponse}
-                                                className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200 disabled:opacity-30">
-                                                💾 Eksporter
-                                            </button>
-                                            <button
-                                                onClick={exportSession}
-                                                className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
-                                                📦 Sesjon
-                                            </button>
-                                        </>
-                                    )}
-                                </>
-                            )}
-                            
-                            <button 
-                                onClick={() => setShowGenealogy(!showGenealogy)}
-                                className={`px-3 py-1.5 rounded-full text-[9px] mono font-medium tracking-wide transition-all ${
-                                    showGenealogy ? 'bg-stone-700 text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-                                }`}>
-                                Tidslinje
-                            </button>
-                            
-                            {genealogy?.discursive_shifts?.source_overview && (
-                                <span className="text-[9px] mono text-stone-500">
-                                    {genealogy.discursive_shifts.source_overview.primary_count || 0} primære / {genealogy.discursive_shifts.source_overview.secondary_count || 0} sekundære
-                                </span>
-                            )}
-                        </div>
-                    </header>
-
-                    {!bannerDismissed && (
-                        <div className="fixed top-12 left-0 w-full z-40 bg-stone-100/80 backdrop-blur-sm border-b border-stone-200/60" style={{ height: '32px' }}>
-                            <div className="h-full flex items-center justify-between px-6">
-                                <span
-                                    onClick={() => setShowAboutModal(true)}
-                                    className="mono text-[10px] text-stone-500 cursor-pointer hover:text-stone-700 transition-colors">
-                                    Forskningsprototype &ndash; første respons kan tage 30-60 sekunder mens modellen vågner. <span className="underline">Læs om projektet.</span>
-                                </span>
+                    {/* INFO-IKON + FORSKERMODUS ØVERST-HØJRE */}
+                    <div className="fixed top-4 right-4 z-[100] flex items-center gap-2">
+                        {researchAllowed && (
+                            <>
                                 <button
-                                    onClick={dismissBanner}
-                                    className="text-stone-400 hover:text-stone-600 text-[12px] leading-none ml-4 p-1"
-                                    aria-label="Luk banner">
-                                    ×
+                                    onClick={() => setResearchMode(!researchMode)}
+                                    className={`px-3 py-1 rounded-full text-[9px] mono font-bold tracking-wide transition-all ${
+                                        researchMode
+                                            ? 'bg-sky-600 text-white shadow-lg shadow-sky-600/30'
+                                            : 'bg-white/80 backdrop-blur-sm text-stone-500 hover:bg-sky-50 hover:text-sky-700 border border-stone-200/60'
+                                    }`}>
+                                    🔬 {researchMode ? 'PÅ' : 'AV'}
                                 </button>
-                            </div>
+                                {researchMode && (
+                                    <>
+                                        <button onClick={fetchSourceAnalytics} className="px-2 py-1 rounded-full text-[8px] mono font-medium bg-white/80 backdrop-blur-sm hover:bg-stone-100 border border-stone-200/60">📊</button>
+                                        <button onClick={exportCurrentAnalysis} disabled={!syntheticResponse} className="px-2 py-1 rounded-full text-[8px] mono font-medium bg-white/80 backdrop-blur-sm hover:bg-stone-100 border border-stone-200/60 disabled:opacity-30">💾</button>
+                                        <button onClick={exportSession} className="px-2 py-1 rounded-full text-[8px] mono font-medium bg-white/80 backdrop-blur-sm hover:bg-stone-100 border border-stone-200/60">📦</button>
+                                    </>
+                                )}
+                            </>
+                        )}
+                        <button
+                            onClick={() => setShowGenealogy(!showGenealogy)}
+                            className={`px-2 py-1 rounded-full text-[8px] mono font-medium tracking-wide transition-all border ${
+                                showGenealogy ? 'bg-stone-700 text-white border-stone-700' : 'bg-white/80 backdrop-blur-sm text-stone-500 border-stone-200/60 hover:bg-stone-100'
+                            }`}>
+                            tidslinje
+                        </button>
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowInfoPopover(!showInfoPopover)}
+                                className={`w-[18px] h-[18px] rounded-full flex items-center justify-center transition-all ${
+                                    showInfoPopover
+                                        ? 'bg-stone-700 text-white'
+                                        : 'bg-transparent text-stone-500 hover:bg-stone-700 hover:text-white'
+                                }`}
+                                style={{ border: '0.5px solid #d6d3d1' }}>
+                                <span className="serif italic text-[10px] leading-none">i</span>
+                            </button>
                         </div>
+                    </div>
+
+                    {/* INFO-POPOVER */}
+                    {showInfoPopover && (
+                        <>
+                            <div className="fixed inset-0 z-[99]" onClick={() => setShowInfoPopover(false)} />
+                            <div className="fixed z-[100]" style={{ top: '42px', right: '16px', width: '320px' }}>
+                                <div className="bg-white/95 backdrop-blur-lg rounded-lg p-4" style={{ border: '0.5px solid #d6d3d1', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}>
+                                    <div className="flex justify-between items-center mb-3">
+                                        <span className="mono text-[9px] font-bold tracking-[0.15em] text-stone-700">GENEALOGISK APPARAT</span>
+                                        <span className="mono text-[8px] text-stone-400">v.10.16</span>
+                                    </div>
+                                    <p className="serif italic text-[11px] leading-relaxed text-stone-700 mb-3">
+                                        Hvad sker der, når en sprogmodel trænes på Kay Fiskers egne tekster og stilles til regnskab for modernismens ambitioner og blinde punkter? Gennem et eksperiment med syntetisk vidensproduktion undersøger dette essay, hvordan en digital rekonstruktion af Fiskers stemme ikke blot aktiverer arkivets viden, men også afslører dets tavsheder, skævheder og magtstrukturer.
+                                    </p>
+                                    <div style={{ height: '0.5px' }} className="bg-stone-200 my-3" />
+                                    <div className="space-y-2">
+                                        <span
+                                            onClick={() => { setShowAboutModal(true); setShowInfoPopover(false); }}
+                                            className="mono text-[10px] text-stone-700 hover:text-stone-900 cursor-pointer block transition-colors">
+                                            læs mere om projektet →
+                                        </span>
+                                        <a href="https://bygningskunstogkultur.dk/nr-11-2026/fisker-arkivet-og-maskinen"
+                                            target="_blank" rel="noopener noreferrer"
+                                            className="mono text-[10px] text-stone-700 hover:text-stone-900 flex items-center gap-1 transition-colors">
+                                            artiklen i magasinet <LucideIcon name="external-link" size={9} className="text-stone-400" />
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
                     )}
 
-                    <main className={`flex-grow relative z-10 transition-all duration-500 ${selectedSources.length > 0 || showGenealogy ? 'mr-[520px]' : 'mr-0'}`} style={{ marginTop: bannerDismissed ? '48px' : '80px' }}>
+                    {/* TITEL NEDERST-VENSTRE */}
+                    <a href="https://bygningskunstogkultur.dk/nr-11-2026/fisker-arkivet-og-maskinen"
+                        target="_blank" rel="noopener noreferrer"
+                        className="fixed z-[90] flex items-center gap-1.5 group" style={{ bottom: '16px', left: '16px', height: '18px' }}>
+                        <span className="serif italic text-[12px] text-stone-700 leading-none group-hover:text-stone-900 transition-colors">Fisker, arkivet og maskinen</span>
+                        <LucideIcon name="external-link" size={9} className="text-stone-400 group-hover:text-stone-600 transition-colors" />
+                    </a>
+
+                    {/* STATE-INDIKATOR NEDERST-HØJRE */}
+                    <div className="fixed z-[90] flex items-center" style={{ bottom: '16px', right: '16px', height: '18px' }}>
+                        <span className={`mono text-[9px] tracking-[0.15em] leading-none ${isSynthesizing ? 'text-sky-500 animate-pulse' : 'text-stone-400'}`}>
+                            {discursiveState.toLowerCase()}
+                        </span>
+                    </div>
+
+                    <main className={`flex-grow relative z-10 transition-all duration-500 ${selectedSources.length > 0 || showGenealogy ? 'mr-[520px]' : 'mr-0'}`} style={{ marginTop: 0 }}>
                         
-                        {isSynthesizing && (
+                        {(isSynthesizing || isVoicePlaying) && (
                             <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
-                                <div className="w-[50vh] h-[50vh] rounded-full blur-[100px] bg-gradient-to-tr from-blue-400 to-cyan-200 opacity-20 animate-breathe"></div>
+                                <div
+                                    className={`w-[50vh] h-[50vh] rounded-full blur-[100px] bg-gradient-to-tr from-blue-400 to-cyan-200 ${isSynthesizing ? 'animate-breathe' : ''}`}
+                                    style={isVoicePlaying ? {
+                                        opacity: 0.12 + voiceAmplitude * 0.55,
+                                        transform: `scale(${0.9 + voiceAmplitude * 0.35})`,
+                                        transition: 'opacity 0.08s ease-out, transform 0.12s ease-out'
+                                    } : { opacity: 0.2 }}
+                                />
                             </div>
                         )}
 
@@ -1142,7 +1219,7 @@
                                         }}>
                                         <div className="flex justify-between items-center mb-3">
                                             <span className="text-[10px] mono font-medium uppercase tracking-wider" style={{ color: s.color }}>
-                                                {s.type}
+                                                {s.type}{s.year ? ` · ${s.year}` : ''}
                                             </span>
                                             <div className="flex items-center gap-2">
                                                 {/* v10.16: Vis scores i forskermodus */}
@@ -1152,7 +1229,7 @@
                                                     </span>
                                                 )}
                                                 {researchMode && s.rerank_score && (
-                                                    <span className="text-[8px] mono text-amber-500" title="Rerank score">
+                                                    <span className="text-[8px] mono text-stone-400" title="Rerank score">
                                                         R:{s.rerank_score?.toFixed(3)}
                                                     </span>
                                                 )}
@@ -1235,26 +1312,26 @@
                                     <div className="flex gap-2 mt-3 flex-wrap">
                                         <button 
                                             onClick={() => setShowAnalyticsPanel(false)}
-                                            className={`px-3 py-1.5 rounded text-[10px] mono ${!showAnalyticsPanel ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                            className={`px-3 py-1.5 rounded text-[10px] mono ${!showAnalyticsPanel ? 'bg-sky-600 text-white' : 'bg-stone-100'}`}>
                                             Kilder
                                         </button>
                                         {searchLog && (
                                             <button 
                                                 onClick={() => setShowAnalyticsPanel('search')}
-                                                className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'search' ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                                className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'search' ? 'bg-sky-600 text-white' : 'bg-stone-100'}`}>
                                                 Søkelogg
                                             </button>
                                         )}
                                         {responseComposition && (
                                             <button 
                                                 onClick={() => setShowAnalyticsPanel('composition')}
-                                                className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'composition' ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                                className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'composition' ? 'bg-sky-600 text-white' : 'bg-stone-100'}`}>
                                                 Komposisjon
                                             </button>
                                         )}
                                         <button 
                                             onClick={() => { fetchSourceAnalytics(); setShowAnalyticsPanel('stats'); }}
-                                            className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'stats' ? 'bg-amber-500 text-white' : 'bg-stone-100'}`}>
+                                            className={`px-3 py-1.5 rounded text-[10px] mono ${showAnalyticsPanel === 'stats' ? 'bg-sky-600 text-white' : 'bg-stone-100'}`}>
                                             Statistikk
                                         </button>
                                     </div>
@@ -1309,9 +1386,9 @@
                                                 </div>
                                                 {attr && (
                                                     <span className={`text-[9px] mono px-2 py-1 rounded ${
-                                                        attr.confidence === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                                                        attr.confidence === 'high' ? 'bg-sky-100 text-sky-700' :
                                                         attr.confidence === 'medium' ? 'bg-sky-100 text-sky-700' :
-                                                        'bg-amber-100 text-amber-700'
+                                                        'bg-stone-100 text-stone-600'
                                                     }`}>
                                                         {attr.epistemic_level}
                                                     </span>
@@ -1365,8 +1442,8 @@
                                             
                                             {/* v10.16: Segment-analyse i forskermodus */}
                                             {researchMode && s.segment_analysis?.statistics && (
-                                                <div className="bg-amber-50 p-4 rounded border border-amber-200 mt-4">
-                                                    <div className="text-[10px] mono font-bold text-amber-800 mb-2">SEGMENT-ANALYSE:</div>
+                                                <div className="bg-stone-50 p-4 rounded border border-stone-200 mt-4">
+                                                    <div className="text-[10px] mono font-bold text-stone-700 mb-2">SEGMENT-ANALYSE:</div>
                                                     <div className="grid grid-cols-2 gap-2 text-[9px] mono mb-3">
                                                         <div>Analyserte: {s.segment_analysis.statistics.total_segments_analyzed}</div>
                                                         <div>Max sim: {((s.segment_analysis.statistics.max_similarity || 0) * 100).toFixed(1)}%</div>
@@ -1375,7 +1452,7 @@
                                                         <div key={idx} className="bg-white p-2 rounded mb-2 text-[10px]">
                                                             <div className="flex justify-between mb-1">
                                                                 <span className={`px-1.5 py-0.5 rounded text-[8px] ${
-                                                                    seg.contribution_level === 'DIREKTE' ? 'bg-emerald-200 text-emerald-800' :
+                                                                    seg.contribution_level === 'DIREKTE' ? 'bg-sky-200 text-sky-800' :
                                                                     seg.contribution_level === 'HØY' ? 'bg-sky-200 text-sky-800' :
                                                                     'bg-stone-200 text-stone-600'
                                                                 }`}>{seg.contribution_level}</span>
@@ -1447,19 +1524,19 @@
                                                 return (
                                                     <div className="space-y-4">
                                                         <h3 className="text-[12px] font-bold text-stone-800 mb-4 flex items-center gap-2">
-                                                            <div className="w-1 h-4 bg-emerald-600"></div>
+                                                            <div className="w-1 h-4 bg-sky-600"></div>
                                                             <span className="serif italic">"{selectedConcept}"</span> over tid
                                                         </h3>
                                                         
                                                         <div className="relative pl-8">
-                                                            <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-emerald-200"></div>
+                                                            <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-sky-200"></div>
                                                             
                                                             {thematic.occurrences.map((occ, i) => (
                                                                 <div key={i} className="relative mb-4 last:mb-0">
-                                                                    <div className="absolute -left-5 top-2 w-3 h-3 rounded-full border-2 border-white bg-emerald-500 shadow-sm"></div>
+                                                                    <div className="absolute -left-5 top-2 w-3 h-3 rounded-full border-2 border-white bg-sky-500 shadow-sm"></div>
                                                                     
-                                                                    <div className="bg-white/60 backdrop-blur-md p-3 rounded-sm border border-emerald-200/40 shadow-sm">
-                                                                        <div className="text-[11px] font-bold text-emerald-900 mono mb-1">
+                                                                    <div className="bg-white/60 backdrop-blur-md p-3 rounded-sm border border-sky-200/40 shadow-sm">
+                                                                        <div className="text-[11px] font-bold text-sky-900 mono mb-1">
                                                                             {occ.year}
                                                                         </div>
                                                                         <p className="text-[12px] serif italic text-stone-700 leading-relaxed">
@@ -1600,13 +1677,13 @@
                                                         <div>
                                                             <div className="flex justify-between items-center mb-1">
                                                                 <span className="text-[10px] mono text-stone-600">Citater</span>
-                                                                <span className="text-[11px] font-bold text-amber-700 mono">
+                                                                <span className="text-[11px] font-bold text-stone-600 mono">
                                                                     {genealogy.power_knowledge.hierarchy.QUOTES}
                                                                 </span>
                                                             </div>
                                                             <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
                                                                 <div 
-                                                                    className="h-full bg-amber-500"
+                                                                    className="h-full bg-sky-500"
                                                                     style={{ 
                                                                         width: `${(genealogy.power_knowledge.hierarchy.QUOTES / 
                                                                             (genealogy.power_knowledge.hierarchy.PRIMARY + 
@@ -1673,7 +1750,7 @@
                                         <button 
                                             onClick={handleTryAgain} 
                                             disabled={isSynthesizing}
-                                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-amber-500/30">
+                                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stone-500/10 hover:bg-stone-500/15 disabled:opacity-30 transition-all text-[9px] mono font-medium tracking-wide border border-stone-300/40">
                                             <LucideIcon name="refresh-ccw" size={12} /> Prøv igen
                                         </button>
                                     )}
@@ -1700,9 +1777,24 @@
                                                 </span>
                                             )}
                                         </div>
-                                        <button onClick={resetAll} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full">
-                                            <LucideIcon name="refresh-cw" size={12} /> NY SAMTALE
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => isVoicePlaying ? stopVoice() : playVoice(syntheticResponse)}
+                                                disabled={isVoiceLoading}
+                                                className={`flex items-center gap-1.5 px-2 py-1 rounded-full transition-all text-[9px] mono font-medium tracking-wide border ${
+                                                    isVoicePlaying
+                                                        ? 'bg-sky-500/10 border-sky-400/40 text-sky-700 hover:bg-sky-500/20'
+                                                        : isVoiceLoading
+                                                        ? 'bg-black/5 border-white/20 text-stone-400'
+                                                        : 'bg-black/5 border-white/20 hover:bg-black/10 hover:text-black'
+                                                }`}>
+                                                <LucideIcon name={isVoicePlaying ? 'square' : isVoiceLoading ? 'loader' : 'volume-2'} size={12} />
+                                                {isVoicePlaying ? 'Stop' : isVoiceLoading ? 'Indlæser...' : 'Hør stemmen'}
+                                            </button>
+                                            <button onClick={resetAll} className="hover:text-black transition-all flex items-center gap-1.5 bg-black/5 px-2 py-1 rounded-full border border-white/20">
+                                                <LucideIcon name="refresh-cw" size={12} /> NY SAMTALE
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -1717,7 +1809,7 @@
                                 onClick={(e) => e.stopPropagation()}>
                                 <div className="p-8">
                                     <div className="flex items-center justify-between mb-6">
-                                        <h2 className="mono text-[11px] font-bold uppercase tracking-[0.3em] text-stone-700">Om dette projekt</h2>
+                                        <h2 className="serif italic text-[14px] text-stone-700">Fisker, arkivet og maskinen</h2>
                                         <button
                                             onClick={() => setShowAboutModal(false)}
                                             className="text-stone-400 hover:text-stone-700 transition-colors text-[18px] leading-none p-1">
@@ -1725,37 +1817,29 @@
                                         </button>
                                     </div>
 
-                                    <div className="space-y-5 serif text-[14px] leading-relaxed text-stone-700">
+                                    <div className="space-y-5 serif text-[13px] leading-relaxed text-stone-700">
                                         <p>
-                                            Dette er en sprogmodel trænet på den danske arkitekt Kay Fiskers (1893–1965) arkivmateriale – forelæsninger, essays, artikler, breve. Modellen er ikke et orakel, men et eksperiment i syntetisk vidensproduktion: en undersøgelse af, hvordan en historisk stemme kan genaktiveres gennem træningsdata, og hvad sådan en aktivering afslører om arkivets egne tavsheder, skævheder og magtstrukturer.
-                                        </p>
-                                        <p>
-                                            Modellen vakler. Den hallucinerer. Den repeterer. Det er ikke fejl – det er metoden. Når du stiller et spørgsmål, kan du følge hvilke kilder den trækker på, og se hvor sikker eller usikker attributionen er. Forskermodus (skjult som standard) viser den fulde analytiske infrastruktur.
+                                            Hvad sker der, når en sprogmodel trænes på Kay Fiskers egne tekster og stilles til regnskab for modernismens ambitioner og blinde punkter? Gennem et eksperiment med syntetisk vidensproduktion undersøger dette essay, hvordan en digital rekonstruktion af Fiskers stemme ikke blot aktiverer arkivets viden, men også afslører dets tavsheder, skævheder og magtstrukturer.
                                         </p>
 
-                                        <div className="border-t border-stone-200/60 pt-5 space-y-3">
+                                        <div style={{ height: '0.5px' }} className="bg-stone-200" />
+
+                                        <div className="space-y-3">
                                             <div>
                                                 <span className="mono text-[9px] font-bold uppercase tracking-widest text-stone-400 block mb-1">Teknisk grundlag</span>
-                                                <p className="text-[13px]">
+                                                <p>
                                                     Mistral 7B finjusteret med LoRA på Kay Fiskers egne tekster, suppleret med en RAG-arkitektur der giver realtidsadgang til arkivkilder via Pinecone vector database.
                                                 </p>
                                                 <a href="https://bygningskunstogkultur.dk/nr-11-2026/fisker-arkivet-og-maskinen"
                                                     target="_blank" rel="noopener noreferrer"
-                                                    className="mono text-[10px] text-sky-600 hover:text-sky-800 underline mt-1 inline-block">
-                                                    Læs den uddybende artikel
+                                                    className="mono text-[10px] text-stone-700 hover:text-stone-900 mt-2 inline-block transition-colors">
+                                                    Læs den uddybende artikel →
                                                 </a>
                                             </div>
 
                                             <div>
                                                 <span className="mono text-[9px] font-bold uppercase tracking-widest text-stone-400 block mb-1">Projekt af</span>
-                                                <p className="text-[13px]">Andreas Vold, arkitekt, Det Kongelige Akademi.</p>
-                                            </div>
-
-                                            <div>
-                                                <span className="mono text-[9px] font-bold uppercase tracking-widest text-stone-400 block mb-1">Etik</span>
-                                                <p className="text-[13px]">
-                                                    Avatar-funktionalitet anvendes med samtykke fra Fiskers arvinger. Modellen er ikke offentligt tilgængelig som API og er udelukkende et forskningsværktøj.
-                                                </p>
+                                                <p>Andreas Vold, arkitekt, Det Kongelige Akademi.</p>
                                             </div>
                                         </div>
                                     </div>
@@ -1764,15 +1848,7 @@
                         </div>
                     )}
 
-                    <footer className="h-8 bg-transparent flex items-center justify-between px-8 text-[8px] mono text-stone-400 fixed bottom-0 w-full z-40">
-                        <div className="flex gap-8">
-                            <span className="text-stone-300">KADK // GENEALOGI</span>
-                            {logs.slice(-1).map((log, i) => ( 
-                                <span key={i} className="text-stone-400">[{log.time}] {log.msg}</span> 
-                            ))}
-                        </div>
-                        <span className="opacity-30">TIDSLINJE+TEMATIK</span>
-                    </footer>
+                    {/* Footer fjernet - titel og state er nu fixed elementer */}
                 </div>
             );
         };

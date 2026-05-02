@@ -20,9 +20,10 @@ import soundfile as sf
 from datetime import datetime
 from collections import defaultdict, Counter
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
+import httpx
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from peft import PeftModel
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
@@ -70,6 +71,10 @@ if GEMINI_AVAILABLE and GOOGLE_API_KEY:
         print(f"⚠️ Gemini konfiguration fejlede: {e}")
 else:
     print("⚠️ Gemini ikke tilgjengelig - kjører kun med Mistral+LoRA")
+
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "Hp07ONf6C5qlCKOeB4oo")  # Default: Constantin Birkedal (dansk)
+ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 INDEX_NAME = os.environ.get("INDEX_NAME", "kay-fisker-arkiv")
@@ -1680,6 +1685,83 @@ async def get_tts(text: str):
     out = tts(text)
     sf.write("static/tts_output.wav", out["audio"], out["sampling_rate"])
     return FileResponse("static/tts_output.wav", media_type="audio/wav")
+
+
+# --- ELEVENLABS TTS ---
+_tts_cache = {}  # hash -> audio bytes
+TTS_MAX_CHARS = 2000  # ~500 ord, sparer credits
+
+@app.post("/tts-elevenlabs")
+async def tts_elevenlabs(req: Request):
+    """Dansk TTS via ElevenLabs. Returnerer mp3 audio."""
+    if not ELEVENLABS_API_KEY:
+        return JSONResponse({"error": "ELEVENLABS_API_KEY ikke sat"}, 500)
+
+    data = await req.json()
+    text = data.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "Ingen tekst"}, 400)
+
+    # Truncate til max længde
+    if len(text) > TTS_MAX_CHARS:
+        # Klip ved sidste hele sætning inden grænsen
+        truncated = text[:TTS_MAX_CHARS]
+        last_period = max(truncated.rfind('.'), truncated.rfind('!'), truncated.rfind('?'))
+        if last_period > TTS_MAX_CHARS // 2:
+            text = truncated[:last_period + 1]
+        else:
+            text = truncated
+
+    # Cache-opslag
+    cache_key = hashlib.md5(f"{text}_{ELEVENLABS_VOICE_ID}".encode()).hexdigest()
+    if cache_key in _tts_cache:
+        print(f"🔊 TTS cache hit: {cache_key[:8]}")
+        return StreamingResponse(
+            iter([_tts_cache[cache_key]]),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline", "Cache-Control": "public, max-age=3600"}
+        )
+
+    # Kald ElevenLabs API
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128"
+    headers = {
+        "Content-Type": "application/json",
+        "xi-api-key": ELEVENLABS_API_KEY,
+    }
+    payload = {
+        "text": text,
+        "model_id": ELEVENLABS_MODEL,
+        "language_code": "da",
+        "voice_settings": {
+            "stability": 0.6,
+            "similarity_boost": 0.75,
+            "style": 0.15,
+            "speed": 0.9,
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+
+        if resp.status_code != 200:
+            print(f"❌ ElevenLabs fejl {resp.status_code}: {resp.text[:200]}")
+            return JSONResponse({"error": f"ElevenLabs API fejl: {resp.status_code}"}, 502)
+
+        audio_bytes = resp.content
+        _tts_cache[cache_key] = audio_bytes
+        print(f"🔊 TTS genereret: {len(audio_bytes)} bytes, cached som {cache_key[:8]}")
+
+        return StreamingResponse(
+            iter([audio_bytes]),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline", "Cache-Control": "public, max-age=3600"}
+        )
+    except httpx.TimeoutException:
+        return JSONResponse({"error": "ElevenLabs timeout"}, 504)
+    except Exception as e:
+        print(f"❌ TTS fejl: {e}")
+        return JSONResponse({"error": str(e)}, 500)
 
 
 @app.get("/", response_class=HTMLResponse)
