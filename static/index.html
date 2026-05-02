@@ -59,6 +59,23 @@
             const [responseComposition, setResponseComposition] = useState(null);
             const [sourceAnalytics, setSourceAnalytics] = useState(null);
             const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(false);
+
+            // URL-parameter gating for forskermodus
+            const researchAllowed = useMemo(() => {
+                const params = new URLSearchParams(window.location.search);
+                return params.get('research') === 'true';
+            }, []);
+
+            // Banner + modal state
+            const [bannerDismissed, setBannerDismissed] = useState(() => {
+                return sessionStorage.getItem('fisker-banner-dismissed') === 'true';
+            });
+            const [showAboutModal, setShowAboutModal] = useState(false);
+
+            const dismissBanner = () => {
+                setBannerDismissed(true);
+                sessionStorage.setItem('fisker-banner-dismissed', 'true');
+            };
             
             const [viewport, setViewport] = useState({ 
                 w: typeof window !== 'undefined' ? window.innerWidth : 1200, 
@@ -963,35 +980,38 @@
                         </div>
                         
                         <div className="flex items-center gap-4">
-                            {/* v10.16: FORSKERMODUS TOGGLE */}
-                            <button 
-                                onClick={() => setResearchMode(!researchMode)}
-                                className={`px-4 py-1.5 rounded-full text-[10px] mono font-bold tracking-wide transition-all ${
-                                    researchMode 
-                                        ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30' 
-                                        : 'bg-stone-100 text-stone-600 hover:bg-amber-100 hover:text-amber-700'
-                                }`}>
-                                🔬 Forsker {researchMode ? 'PÅ' : 'AV'}
-                            </button>
-                            
-                            {researchMode && (
+                            {researchAllowed && (
                                 <>
-                                    <button 
-                                        onClick={fetchSourceAnalytics}
-                                        className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
-                                        📊 Statistikk
+                                    <button
+                                        onClick={() => setResearchMode(!researchMode)}
+                                        className={`px-4 py-1.5 rounded-full text-[10px] mono font-bold tracking-wide transition-all ${
+                                            researchMode
+                                                ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30'
+                                                : 'bg-stone-100 text-stone-600 hover:bg-amber-100 hover:text-amber-700'
+                                        }`}>
+                                        🔬 Forsker {researchMode ? 'PÅ' : 'AV'}
                                     </button>
-                                    <button 
-                                        onClick={exportCurrentAnalysis}
-                                        disabled={!syntheticResponse}
-                                        className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200 disabled:opacity-30">
-                                        💾 Eksporter
-                                    </button>
-                                    <button 
-                                        onClick={exportSession}
-                                        className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
-                                        📦 Sesjon
-                                    </button>
+
+                                    {researchMode && (
+                                        <>
+                                            <button
+                                                onClick={fetchSourceAnalytics}
+                                                className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
+                                                📊 Statistikk
+                                            </button>
+                                            <button
+                                                onClick={exportCurrentAnalysis}
+                                                disabled={!syntheticResponse}
+                                                className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200 disabled:opacity-30">
+                                                💾 Eksporter
+                                            </button>
+                                            <button
+                                                onClick={exportSession}
+                                                className="px-3 py-1.5 rounded-full text-[9px] mono font-medium bg-stone-100 hover:bg-stone-200">
+                                                📦 Sesjon
+                                            </button>
+                                        </>
+                                    )}
                                 </>
                             )}
                             
@@ -1011,7 +1031,25 @@
                         </div>
                     </header>
 
-                    <main className={`flex-grow relative z-10 transition-all duration-500 ${selectedSources.length > 0 || showGenealogy ? 'mr-[520px]' : 'mr-0'}`} style={{ marginTop: '48px' }}>
+                    {!bannerDismissed && (
+                        <div className="fixed top-12 left-0 w-full z-40 bg-stone-100/80 backdrop-blur-sm border-b border-stone-200/60" style={{ height: '32px' }}>
+                            <div className="h-full flex items-center justify-between px-6">
+                                <span
+                                    onClick={() => setShowAboutModal(true)}
+                                    className="mono text-[10px] text-stone-500 cursor-pointer hover:text-stone-700 transition-colors">
+                                    Forskningsprototype &ndash; første respons kan tage 30-60 sekunder mens modellen vågner. <span className="underline">Læs om projektet.</span>
+                                </span>
+                                <button
+                                    onClick={dismissBanner}
+                                    className="text-stone-400 hover:text-stone-600 text-[12px] leading-none ml-4 p-1"
+                                    aria-label="Luk banner">
+                                    ×
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    <main className={`flex-grow relative z-10 transition-all duration-500 ${selectedSources.length > 0 || showGenealogy ? 'mr-[520px]' : 'mr-0'}`} style={{ marginTop: bannerDismissed ? '48px' : '80px' }}>
                         
                         {isSynthesizing && (
                             <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
@@ -1670,6 +1708,61 @@
                             )}
                         </div>
                     </div>
+
+                    {showAboutModal && (
+                        <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={() => setShowAboutModal(false)}>
+                            <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+                            <div
+                                className="relative glass-membrane rounded-2xl max-w-[560px] w-full mx-6 max-h-[80vh] overflow-y-auto"
+                                onClick={(e) => e.stopPropagation()}>
+                                <div className="p-8">
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h2 className="mono text-[11px] font-bold uppercase tracking-[0.3em] text-stone-700">Om dette projekt</h2>
+                                        <button
+                                            onClick={() => setShowAboutModal(false)}
+                                            className="text-stone-400 hover:text-stone-700 transition-colors text-[18px] leading-none p-1">
+                                            ×
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-5 serif text-[14px] leading-relaxed text-stone-700">
+                                        <p>
+                                            Dette er en sprogmodel trænet på den danske arkitekt Kay Fiskers (1893–1965) arkivmateriale – forelæsninger, essays, artikler, breve. Modellen er ikke et orakel, men et eksperiment i syntetisk vidensproduktion: en undersøgelse af, hvordan en historisk stemme kan genaktiveres gennem træningsdata, og hvad sådan en aktivering afslører om arkivets egne tavsheder, skævheder og magtstrukturer.
+                                        </p>
+                                        <p>
+                                            Modellen vakler. Den hallucinerer. Den repeterer. Det er ikke fejl – det er metoden. Når du stiller et spørgsmål, kan du følge hvilke kilder den trækker på, og se hvor sikker eller usikker attributionen er. Forskermodus (skjult som standard) viser den fulde analytiske infrastruktur.
+                                        </p>
+
+                                        <div className="border-t border-stone-200/60 pt-5 space-y-3">
+                                            <div>
+                                                <span className="mono text-[9px] font-bold uppercase tracking-widest text-stone-400 block mb-1">Teknisk grundlag</span>
+                                                <p className="text-[13px]">
+                                                    Mistral 7B finjusteret med LoRA på Kay Fiskers egne tekster, suppleret med en RAG-arkitektur der giver realtidsadgang til arkivkilder via Pinecone vector database.
+                                                </p>
+                                                <a href="https://bygningskunstogkultur.dk/nr-11-2026/fisker-arkivet-og-maskinen"
+                                                    target="_blank" rel="noopener noreferrer"
+                                                    className="mono text-[10px] text-sky-600 hover:text-sky-800 underline mt-1 inline-block">
+                                                    Læs den uddybende artikel
+                                                </a>
+                                            </div>
+
+                                            <div>
+                                                <span className="mono text-[9px] font-bold uppercase tracking-widest text-stone-400 block mb-1">Projekt af</span>
+                                                <p className="text-[13px]">Andreas Vold, arkitekt, Det Kongelige Akademi.</p>
+                                            </div>
+
+                                            <div>
+                                                <span className="mono text-[9px] font-bold uppercase tracking-widest text-stone-400 block mb-1">Etik</span>
+                                                <p className="text-[13px]">
+                                                    Avatar-funktionalitet anvendes med samtykke fra Fiskers arvinger. Modellen er ikke offentligt tilgængelig som API og er udelukkende et forskningsværktøj.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <footer className="h-8 bg-transparent flex items-center justify-between px-8 text-[8px] mono text-stone-400 fixed bottom-0 w-full z-40">
                         <div className="flex gap-8">
