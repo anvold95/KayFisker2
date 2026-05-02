@@ -81,8 +81,8 @@
 
             const stopVoice = () => {
                 if (audioElementRef.current) {
-                    audioElementRef.current.pause();
-                    audioElementRef.current.src = '';
+                    try { audioElementRef.current.stop(); } catch(e) {}
+                    audioElementRef.current = null;
                 }
                 if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
                 setIsVoicePlaying(false);
@@ -104,7 +104,7 @@
                         return;
                     }
                     const blob = await resp.blob();
-                    const url = URL.createObjectURL(blob);
+                    const arrayBuffer = await blob.arrayBuffer();
 
                     if (!audioContextRef.current) {
                         audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -112,9 +112,10 @@
                     const ctx = audioContextRef.current;
                     if (ctx.state === 'suspended') await ctx.resume();
 
-                    const audio = new Audio(url);
-                    audioElementRef.current = audio;
-                    const source = ctx.createMediaElementSource(audio);
+                    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+                    const source = ctx.createBufferSource();
+                    source.buffer = audioBuffer;
+
                     const analyser = ctx.createAnalyser();
                     analyser.fftSize = 256;
                     analyser.smoothingTimeConstant = 0.8;
@@ -131,10 +132,11 @@
                         animFrameRef.current = requestAnimationFrame(tick);
                     };
 
-                    audio.onplay = () => { setIsVoicePlaying(true); tick(); };
-                    audio.onended = () => { stopVoice(); URL.revokeObjectURL(url); };
-                    audio.onerror = () => { stopVoice(); addLog('Afspilningsfejl'); URL.revokeObjectURL(url); };
-                    await audio.play();
+                    source.onended = () => stopVoice();
+                    audioElementRef.current = source;
+                    setIsVoicePlaying(true);
+                    tick();
+                    source.start(0);
                 } catch (e) {
                     addLog(`Stemme-fejl: ${e.message}`);
                     stopVoice();
@@ -1805,7 +1807,7 @@
                         <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={() => setShowAboutModal(false)}>
                             <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
                             <div
-                                className="relative glass-membrane rounded-2xl max-w-[560px] w-full mx-6 max-h-[80vh] overflow-y-auto"
+                                className="relative bg-white rounded-2xl max-w-[560px] w-full mx-6 max-h-[80vh] overflow-y-auto shadow-2xl"
                                 onClick={(e) => e.stopPropagation()}>
                                 <div className="p-8">
                                     <div className="flex items-center justify-between mb-6">
